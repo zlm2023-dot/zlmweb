@@ -73,42 +73,54 @@ const DEFAULT_ALERT_CONFIG = {
 };
 
 /* ==========================================================
-   默认题库（教育局可在后台增删；题目文本不含「最近两周」前缀，
-   该前缀在前端渲染时按量表类型自动附加）
+   量表定义（三套标准量表 + 教育局导入的自定义量表）
+   opt: 4 → 0–3 四级频度（PHQ/GAD）；7 → 1–7 七级同意度（SWLS）
+   base: 标准题数，题目数与之不符时按比例折算
    ========================================================== */
-const DEFAULT_QUESTIONS = {
-  phq9: [
-    '做事时提不起劲或没有兴趣。',
-    '感到心情低落、沮丧或绝望。',
-    '入睡困难、睡不安稳或睡眠过多。',
-    '感觉疲倦或没有活力。',
-    '食欲不振或吃太多。',
-    '觉得自己很糟，或觉得自己是失败者，或让自己或家人失望。',
-    '对事物专注有困难，例如阅读报纸或看电视时。',
-    '动作或说话速度缓慢到别人已经察觉？或正好相反——烦躁坐立不安、动来动去的情况更胜于平常。',
-    '有不如死掉或用某种方式伤害自己的念头。'
-  ],
-  gad7: [
-    '感觉紧张、焦虑或急切。',
-    '不能停止或控制担忧。',
-    '对各种各样的事情担忧过多。',
-    '很难放松下来。',
-    '由于不安而无法静坐。',
-    '变得容易烦恼或急躁。',
-    '感到似乎将有可怕的事情发生而害怕。'
-  ],
-  swls: [
-    '在大多数情况下，我的生活接近我的理想状态。',
-    '我的生活条件很好。',
-    '我对我的生活感到满意。',
-    '目前为止，我已经得到了生活中我想要的一些重要东西。',
-    '如果可以再活一次，我还愿意过现在这样的生活。'
-  ]
-};
-/* 各量表「标准题数」，用于增删题目后把得分折算回原量表的分制 */
+const STANDARD_SCALES = [
+  {
+    key: 'phq9', short: 'PHQ-9', name: '抑郁', base: 9, opt: 4, ord: 0, standard: 1,
+    intro: '在最近两周中，你有多少天出现过以下情况？请根据你的实际情况，选出最符合你的选项。',
+    items: [
+      '做事时提不起劲或没有兴趣。',
+      '感到心情低落、沮丧或绝望。',
+      '入睡困难、睡不安稳或睡眠过多。',
+      '感觉疲倦或没有活力。',
+      '食欲不振或吃太多。',
+      '觉得自己很糟，或觉得自己是失败者，或让自己或家人失望。',
+      '对事物专注有困难，例如阅读报纸或看电视时。',
+      '动作或说话速度缓慢到别人已经察觉？或正好相反——烦躁坐立不安、动来动去的情况更胜于平常。',
+      '有不如死掉或用某种方式伤害自己的念头。'
+    ]
+  },
+  {
+    key: 'gad7', short: 'GAD-7', name: '焦虑', base: 7, opt: 4, ord: 1, standard: 1,
+    intro: '在最近两周中，你有多少天出现过以下情况？请你根据实际情况，选出最符合的选项。',
+    items: [
+      '感觉紧张、焦虑或急切。',
+      '不能停止或控制担忧。',
+      '对各种各样的事情担忧过多。',
+      '很难放松下来。',
+      '由于不安而无法静坐。',
+      '变得容易烦恼或急躁。',
+      '感到似乎将有可怕的事情发生而害怕。'
+    ]
+  },
+  {
+    key: 'swls', short: 'SWLS', name: '生活满意度', base: 5, opt: 7, ord: 2, standard: 1,
+    intro: '仔细阅读下列描述，它们与你现在的实际情况符合程度如何？请选择相应的选项。',
+    items: [
+      '在大多数情况下，我的生活接近我的理想状态。',
+      '我的生活条件很好。',
+      '我对我的生活感到满意。',
+      '目前为止，我已经得到了生活中我想要的一些重要东西。',
+      '如果可以再活一次，我还愿意过现在这样的生活。'
+    ]
+  }
+];
+const STANDARD_KEYS = STANDARD_SCALES.map(s => s.key);
+/* 各量表「标准题数」，用于题目数与标准不符时折算回原分制 */
 const BASE_COUNT = { phq9: 9, gad7: 7, swls: 5 };
-const SCALE_NAMES = { phq9: 'PHQ-9 抑郁', gad7: 'GAD-7 焦虑', swls: 'SWLS 生活满意度' };
-const OPT_RANGE = { phq9: [0, 3], gad7: [0, 3], swls: [1, 7] };
 /* 自杀意念题：PHQ-9 第 9 题，打上标记后即便题号变动也能定位 */
 const SELFHARM_INDEX_DEFAULT = 8;
 
@@ -199,6 +211,22 @@ async function ensureSchema(db, adminPwd) {
         )`
       ).run();
       await db.prepare('CREATE INDEX IF NOT EXISTS idx_questions_scale ON questions(scale_key)').run();
+      /* 量表定义表：三套标准量表 + 教育局导入的自定义量表 */
+      await db.prepare(
+        `CREATE TABLE IF NOT EXISTS scales (
+          id TEXT PRIMARY KEY,
+          skey TEXT NOT NULL UNIQUE,
+          short TEXT NOT NULL,
+          name TEXT NOT NULL,
+          base INTEGER NOT NULL DEFAULT 0,
+          opt INTEGER NOT NULL DEFAULT 4,
+          intro TEXT NOT NULL DEFAULT '',
+          ord INTEGER NOT NULL DEFAULT 0,
+          standard INTEGER NOT NULL DEFAULT 0,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          created_at INTEGER NOT NULL
+        )`
+      ).run();
       // 首次运行时，用环境变量里的管理员密码创建一个教育局账号
       const n = await db.prepare('SELECT COUNT(*) AS c FROM accounts').first();
       if (!n || n.c === 0) {
@@ -208,16 +236,18 @@ async function ensureSchema(db, adminPwd) {
           'INSERT INTO accounts (id,role,school,username,pass_hash,salt,active,created_at) VALUES (?1,?2,?3,?4,?5,?6,1,?7)'
         ).bind(genId(), 'bureau', '', 'admin', hash, salt, Date.now()).run();
       }
-      // 题库为空时写入默认量表题目
-      const q = await db.prepare('SELECT COUNT(*) AS c FROM questions').first();
-      if (!q || q.c === 0) {
-        for (const key of Object.keys(DEFAULT_QUESTIONS)) {
-          const arr = DEFAULT_QUESTIONS[key];
-          for (let i = 0; i < arr.length; i++) {
-            const flag = (key === 'phq9' && i === SELFHARM_INDEX_DEFAULT) ? 'selfharm' : '';
+      /* 量表表为空时，写入三套标准量表及其题目 */
+      const sc = await db.prepare('SELECT COUNT(*) AS c FROM scales').first();
+      if (!sc || sc.c === 0) {
+        for (const s of STANDARD_SCALES) {
+          await db.prepare(
+            'INSERT INTO scales (id,skey,short,name,base,opt,intro,ord,standard,enabled,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,1,1,?9)'
+          ).bind(genId(), s.key, s.short, s.name, s.base, s.opt, s.intro, s.ord, Date.now()).run();
+          for (let i = 0; i < s.items.length; i++) {
+            const flag = (s.key === 'phq9' && i === SELFHARM_INDEX_DEFAULT) ? 'selfharm' : '';
             await db.prepare(
               'INSERT INTO questions (id,scale_key,title,ord,flag,created_at) VALUES (?1,?2,?3,?4,?5,?6)'
-            ).bind(genId(), key, arr[i], i, flag, Date.now()).run();
+            ).bind(genId(), s.key, s.items[i], i, flag, Date.now()).run();
           }
         }
       }
@@ -262,24 +292,41 @@ async function saveAlertConfig(db, cfg, who) {
   return out;
 }
 
+/* 读取当前启用的量表定义（按 ord 排序）；标准量表排在前 */
+async function getScales(db) {
+  const rows = await db.prepare(
+    'SELECT id,skey,short,name,base,opt,intro,ord,standard,enabled FROM scales WHERE enabled=1 ORDER BY ord, created_at'
+  ).all();
+  return (rows.results || []).map(function (r) {
+    return {
+      id: r.id, key: r.skey, short: r.short, name: r.name,
+      base: r.base, opt: r.opt, intro: r.intro,
+      ord: r.ord, standard: !!r.standard
+    };
+  });
+}
 /* 读取当前题库：按量表分组、按 ord 排序 */
 async function getQuestions(db) {
   const rows = await db.prepare('SELECT id,scale_key,title,ord,flag FROM questions ORDER BY ord, created_at').all();
-  const out = { phq9: [], gad7: [], swls: [] };
+  const out = {};
   (rows.results || []).forEach(function (r) {
-    if (out[r.scale_key]) out[r.scale_key].push(r);
+    (out[r.scale_key] = out[r.scale_key] || []).push(r);
   });
   return out;
 }
-/* 把某个量表恢复成默认题目 */
+/* 把某套标准量表恢复成默认题目（自定义量表不可调用） */
 async function resetQuestions(db, key) {
+  const s = STANDARD_SCALES.filter(function (x) { return x.key === key; })[0];
+  if (!s) return false;
   await db.prepare('DELETE FROM questions WHERE scale_key = ?1').bind(key).run();
-  const arr = DEFAULT_QUESTIONS[key] || [];
-  for (let i = 0; i < arr.length; i++) {
+  for (let i = 0; i < s.items.length; i++) {
     const flag = (key === 'phq9' && i === SELFHARM_INDEX_DEFAULT) ? 'selfharm' : '';
     await db.prepare('INSERT INTO questions (id,scale_key,title,ord,flag,created_at) VALUES (?1,?2,?3,?4,?5,?6)')
-      .bind(genId(), key, arr[i], i, flag, Date.now()).run();
+      .bind(genId(), key, s.items[i], i, flag, Date.now()).run();
   }
+  await db.prepare('UPDATE scales SET base=?1, intro=?2, name=?3, short=?4 WHERE skey=?5')
+    .bind(s.base, s.intro, s.name, s.short, key).run();
+  return true;
 }
 /* ==========================================================
    四、通用工具
@@ -337,18 +384,22 @@ export default {
       return json({ ok: true, time: Date.now() });
     }
 
-    /* ---------- GET：公开配置（题库 + 预警参数，学生端与前端展示共用） ---------- */
+    /* ---------- GET：公开配置（量表 + 题库 + 预警参数，学生端与前端展示共用） ---------- */
     if (url.pathname === '/api/config' && request.method === 'GET') {
+      const S = await getScales(db);
       const Q = await getQuestions(db);
-      const data = {};
-      Object.keys(Q).forEach(function (k) {
-        data[k] = Q[k].map(function (x) { return { id: x.id, title: x.title, flag: x.flag }; });
+      const scales = S.map(function (s) {
+        return {
+          key: s.key, short: s.short, name: s.name, base: s.base,
+          opt: s.opt, intro: s.intro, standard: s.standard,
+          items: (Q[s.key] || []).map(function (x) { return { id: x.id, title: x.title, flag: x.flag }; })
+        };
       });
       const cfg = await getAlertConfig(db);
-      return json({ ok: true, questions: data, alert: cfg });
+      return json({ ok: true, scales: scales, alert: cfg });
     }
 
-    /* ---------- GET：公开题库（学生作答用，教育局增删后即时生效） ---------- */
+    /* ---------- GET：公开题库（兼容旧调用：按量表分组返回题目） ---------- */
     if (url.pathname === '/api/questions' && request.method === 'GET') {
       const Q = await getQuestions(db);
       const data = {};
@@ -387,25 +438,44 @@ export default {
             typeof r.klass !== 'string' || !r.klass.trim()) {
           return json({ ok: false, msg: '请选择年级与班级' });
         }
-        /* 题目数量以当前题库为准（教育局增删后自动生效） */
+        /* 题目数量以当前题库为准（教育局导入量表后自动生效） */
+        const S = await getScales(db);
         const Q = await getQuestions(db);
-        const nP = Q.phq9.length, nG = Q.gad7.length, nS = Q.swls.length;
-        if (!nP || !nG || !nS) return json({ ok: false, msg: '题库尚未配置完整，请联系教育局' });
-        if (!validArr(r.phq9, nP, 0, 3) || !validArr(r.gad7, nG, 0, 3) || !validArr(r.swls, nS, 1, 7)) {
-          return json({ ok: false, msg: '答卷数据不完整或格式错误（题目数量与当前题库不一致）' });
+        const ans = r.answers || {};
+        /* 逐套量表校验：题数必须与当前题库一致，分值须落在该量表选项范围内 */
+        const qcount = {}, qtext = {}, rawSum = {}, answers = {};
+        for (const s of S) {
+          const arr = ans[s.key];
+          const qs = Q[s.key] || [];
+          if (!qs.length) return json({ ok: false, msg: '量表「' + s.name + '」尚未配置题目，请联系教育局' });
+          const lo = s.opt === 7 ? 1 : 0, hi = s.opt === 7 ? 7 : 3;
+          if (!validArr(arr, qs.length, lo, hi)) {
+            return json({ ok: false, msg: '答卷数据不完整或格式错误（' + s.short + ' 应为 ' + qs.length + ' 题）' });
+          }
+          answers[s.key] = arr.slice();
+          qcount[s.key] = qs.length;
+          qtext[s.key] = qs.map(function (x) { return x.title; });
+          rawSum[s.key] = arr.reduce((a, b) => a + b, 0);
         }
+        /* 三套标准量表必须存在，否则无法做预警判定 */
+        const nP = qcount.phq9 || 0, nG = qcount.gad7 || 0, nS = qcount.swls || 0;
+        if (!nP || !nG || !nS) return json({ ok: false, msg: '标准量表缺失，请联系教育局配置' });
         /* 后端重新计分，不信任前端传来的分数 */
-        const phqRaw = r.phq9.reduce((a, b) => a + b, 0);
-        const gadRaw = r.gad7.reduce((a, b) => a + b, 0);
-        const swlsRaw = r.swls.reduce((a, b) => a + b, 0);
-        /* 题目数被改动时，按比例折算回原量表分制，保证仍能用原阈值分级 */
+        const phqRaw = rawSum.phq9, gadRaw = rawSum.gad7, swlsRaw = rawSum.swls;
+        /* 题目数与标准不符时，按比例折算回原量表分制，保证仍能套用阈值 */
         const phq = prorate(phqRaw, nP, BASE_COUNT.phq9);
         const gad = prorate(gadRaw, nG, BASE_COUNT.gad7);
         const swlsScore = prorate(swlsRaw, nS, BASE_COUNT.swls);
         const alertCfg = await getAlertConfig(db);
         /* 自杀意念题按 flag 定位，题号变动也不会跟丢 */
-        const shIdx = Q.phq9.findIndex(function (q) { return q.flag === 'selfharm'; });
-        const shv = shIdx >= 0 ? r.phq9[shIdx] : 0;
+        const shIdx = (Q.phq9 || []).findIndex(function (q) { return q.flag === 'selfharm'; });
+        const shv = shIdx >= 0 ? answers.phq9[shIdx] : 0;
+        /* 自定义量表：单独记分，不参与预警算法 */
+        const extra = {};
+        S.forEach(function (s) {
+          if (s.standard) return;
+          extra[s.key] = { name: s.name, short: s.short, raw: rawSum[s.key], n: qcount[s.key] };
+        });
         const rec = {
           _id: genId(),
           createdAt: Date.now(),
@@ -413,8 +483,10 @@ export default {
           name: r.name.trim().slice(0, 50),
           grade: r.grade.trim().slice(0, 30),
           klass: r.klass.trim().slice(0, 30),
-          phq9: r.phq9, gad7: r.gad7, swls: r.swls,
-          phqRaw, gadRaw, swlsRaw,
+          /* 兼容旧字段命名 */
+          phq9: answers.phq9, gad7: answers.gad7, swls: answers.swls,
+          answers, extra,
+          phqRaw, gadRaw, swlsRaw, rawSum,
           phq, gad, swlsScore,
           phqLevel: gradePHQ(phq, alertCfg),
           gadLevel: gradeGAD(gad, alertCfg),
@@ -423,12 +495,9 @@ export default {
           hasSelfHarmQ: shIdx >= 0,
           selfHarm: shv > 0,
           selfHarmScore: shv,          /* 自杀意念维度：该题原始得分 0–3 */
-          qcount: { phq9: nP, gad7: nG, swls: nS },
-          qtext: {                     /* 题目快照：历史答卷按当时题面展示，不受后续增删影响 */
-            phq9: Q.phq9.map(function (x) { return x.title; }),
-            gad7: Q.gad7.map(function (x) { return x.title; }),
-            swls: Q.swls.map(function (x) { return x.title; })
-          }
+          qcount,
+          scaleNames: S.map(function (s) { return { key: s.key, name: s.name, short: s.short, standard: s.standard }; }),
+          qtext                        /* 题目快照：历史答卷按当时题面展示，不受后续导入影响 */
         };
         await db.prepare('INSERT INTO records (id, created_at, school, data) VALUES (?1, ?2, ?3, ?4)')
           .bind(rec._id, rec.createdAt, normSchool(rec.school), JSON.stringify(rec))
@@ -531,7 +600,8 @@ export default {
 
       if (url.pathname === '/api/clear') {
         if (me.role === 'school') {
-          await db.prepare('DELETE FROM records WHERE school = ?1').bind(me.school).run();
+          /* 入库时校名统一转成小写，这里也要同样处理，否则中文/大小写差异会删不掉 */
+          await db.prepare('DELETE FROM records WHERE school = ?1').bind(normSchool(me.school)).run();
         } else {
           await db.prepare('DELETE FROM records').run();
         }
@@ -615,44 +685,102 @@ export default {
       }
 
       /* ==========================================================
-         教育局端：题库管理（增删测评题目）
+         教育局端：量表管理（整体导入 / 替换 / 删除）
+         不再支持单题增删——整表导入才能保证量表内部一致、可复核
          ========================================================== */
-      if (url.pathname === '/api/questions/add') {
+      if (url.pathname === '/api/scales/import') {
         const bad = needBureau(me);
         if (bad) return json({ ok: false, msg: bad });
-        const key = String(body.scaleKey || '');
-        const title = String(body.title || '').trim();
-        if (!DEFAULT_QUESTIONS[key]) return json({ ok: false, msg: '量表不存在' });
-        if (!title) return json({ ok: false, msg: '题目内容不能为空' });
-        if (title.length > 200) return json({ ok: false, msg: '题目内容过长（最多 200 字）' });
-        const mx = await db.prepare('SELECT MAX(ord) AS m FROM questions WHERE scale_key = ?1').bind(key).first();
-        const ord = (mx && typeof mx.m === 'number') ? mx.m + 1 : 0;
-        await db.prepare('INSERT INTO questions (id,scale_key,title,ord,flag,created_at) VALUES (?1,?2,?3,?4,?5,?6)')
-          .bind(genId(), key, title, ord, '', Date.now()).run();
+
+        const key = String(body.key || '').trim();
+        const name = String(body.name || '').trim();
+        const short = String(body.short || '').trim() || name;
+        const intro = String(body.intro || '').trim();
+        const opt = Number(body.opt) === 7 ? 7 : 4;
+        const items = Array.isArray(body.items) ? body.items : [];
+
+        if (!key) return json({ ok: false, msg: '缺少量表标识' });
+        if (!name) return json({ ok: false, msg: '请填写量表名称' });
+        if (!items.length) return json({ ok: false, msg: '请至少导入 1 道题目' });
+        if (items.length > 100) return json({ ok: false, msg: '题目过多（最多 100 题）' });
+        if (name.length > 40) return json({ ok: false, msg: '量表名称过长（最多 40 字）' });
+        if (intro.length > 300) return json({ ok: false, msg: '指导语过长（最多 300 字）' });
+
+        /* 清洗题目：去空白行、去行首编号、截断超长 */
+        const clean = [];
+        for (const raw of items) {
+          const t = String(raw == null ? '' : raw)
+            .replace(/^\s*\d+[\.、\)）]\s*/, '')   // 去掉「1. 」「2、」这类前缀
+            .trim();
+          if (!t) continue;
+          if (t.length > 200) return json({ ok: false, msg: '有题目超过 200 字，请精简后再导入' });
+          clean.push(t);
+        }
+        if (!clean.length) return json({ ok: false, msg: '没有识别到有效题目' });
+
+        const isStd = STANDARD_KEYS.indexOf(key) >= 0;
+        const row = await db.prepare('SELECT id,standard FROM scales WHERE skey = ?1').bind(key).first();
+
+        if (row && row.standard) {
+          /* 标准量表：只允许整体替换题目与指导语，名称/选项类型锁定 */
+          const std = STANDARD_SCALES.filter(x => x.key === key)[0];
+          await db.prepare('DELETE FROM questions WHERE scale_key = ?1').bind(key).run();
+          for (let i = 0; i < clean.length; i++) {
+            const flag = (key === 'phq9' && i === SELFHARM_INDEX_DEFAULT) ? 'selfharm' : '';
+            await db.prepare('INSERT INTO questions (id,scale_key,title,ord,flag,created_at) VALUES (?1,?2,?3,?4,?5,?6)')
+              .bind(genId(), key, clean[i], i, flag, Date.now()).run();
+          }
+          await db.prepare('UPDATE scales SET intro=?1 WHERE skey=?2').bind(intro || std.intro, key).run();
+          return json({ ok: true, replaced: true });
+        }
+
+        if (row) {
+          /* 已存在的自定义量表：整体替换 */
+          await db.prepare('DELETE FROM questions WHERE scale_key = ?1').bind(key).run();
+          for (let i = 0; i < clean.length; i++) {
+            await db.prepare('INSERT INTO questions (id,scale_key,title,ord,flag,created_at) VALUES (?1,?2,?3,?4,?5,?6)')
+              .bind(genId(), key, clean[i], i, '', Date.now()).run();
+          }
+          await db.prepare('UPDATE scales SET short=?1, name=?2, opt=?3, intro=?4, base=?5 WHERE skey=?6')
+            .bind(short, name, opt, intro, clean.length, key).run();
+          return json({ ok: true, replaced: true });
+        }
+
+        /* 新建自定义量表 */
+        const mx = await db.prepare('SELECT MAX(ord) AS m FROM scales').first();
+        const ord = (mx && typeof mx.m === 'number') ? mx.m + 1 : STANDARD_SCALES.length;
+        await db.prepare(
+          'INSERT INTO scales (id,skey,short,name,base,opt,intro,ord,standard,enabled,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,0,1,?9)'
+        ).bind(genId(), key, short, name, clean.length, opt, intro, ord, Date.now()).run();
+        for (let i = 0; i < clean.length; i++) {
+          await db.prepare('INSERT INTO questions (id,scale_key,title,ord,flag,created_at) VALUES (?1,?2,?3,?4,?5,?6)')
+            .bind(genId(), key, clean[i], i, '', Date.now()).run();
+        }
+        return json({ ok: true, created: true });
+      }
+
+      /* 恢复某套标准量表为出厂题目 */
+      if (url.pathname === '/api/scales/reset') {
+        const bad = needBureau(me);
+        if (bad) return json({ ok: false, msg: bad });
+        const key = String(body.key || '');
+        if (STANDARD_KEYS.indexOf(key) < 0) return json({ ok: false, msg: '只能恢复标准量表' });
+        const done = await resetQuestions(db, key);
+        if (!done) return json({ ok: false, msg: '量表不存在' });
         return json({ ok: true });
       }
 
-      if (url.pathname === '/api/questions/edit') {
+      /* 删除自定义量表（标准量表不可删） */
+      if (url.pathname === '/api/scales/delete') {
         const bad = needBureau(me);
         if (bad) return json({ ok: false, msg: bad });
-        const title = String(body.title || '').trim();
-        if (!title) return json({ ok: false, msg: '题目内容不能为空' });
-        if (title.length > 200) return json({ ok: false, msg: '题目内容过长（最多 200 字）' });
-        const row = await db.prepare('SELECT id FROM questions WHERE id = ?1').bind(body.id).first();
-        if (!row) return json({ ok: false, msg: '题目不存在' });
-        await db.prepare('UPDATE questions SET title = ?1 WHERE id = ?2').bind(title, row.id).run();
+        const key = String(body.key || '');
+        const row = await db.prepare('SELECT id,standard FROM scales WHERE skey = ?1').bind(key).first();
+        if (!row) return json({ ok: false, msg: '量表不存在' });
+        if (row.standard) return json({ ok: false, msg: '标准量表不可删除' });
+        await db.prepare('DELETE FROM questions WHERE scale_key = ?1').bind(key).run();
+        await db.prepare('DELETE FROM scales WHERE skey = ?1').bind(key).run();
         return json({ ok: true });
-      }
-
-      if (url.pathname === '/api/questions/delete') {
-        const bad = needBureau(me);
-        if (bad) return json({ ok: false, msg: bad });
-        const row = await db.prepare('SELECT id,scale_key,flag FROM questions WHERE id = ?1').bind(body.id).first();
-        if (!row) return json({ ok: false, msg: '题目不存在' });
-        const cnt = await db.prepare('SELECT COUNT(*) AS c FROM questions WHERE scale_key = ?1').bind(row.scale_key).first();
-        if (cnt && cnt.c <= 1) return json({ ok: false, msg: '至少要保留 1 道题目' });
-        await db.prepare('DELETE FROM questions WHERE id = ?1').bind(row.id).run();
-        return json({ ok: true, deletedFlag: row.flag || '' });
       }
 
       /* ----- 教育局端：预警判定参数 ----- */
@@ -731,15 +859,6 @@ export default {
         if (bad) return json({ ok: false, msg: bad });
         const saved = await saveAlertConfig(db, DEFAULT_ALERT_CONFIG, me.username);
         return json({ ok: true, config: saved });
-      }
-
-      if (url.pathname === '/api/questions/reset') {
-        const bad = needBureau(me);
-        if (bad) return json({ ok: false, msg: bad });
-        const key = String(body.scaleKey || '');
-        if (!DEFAULT_QUESTIONS[key]) return json({ ok: false, msg: '量表不存在' });
-        await resetQuestions(db, key);
-        return json({ ok: true });
       }
 
       return json({ ok: false, msg: '未知操作' }, 404);

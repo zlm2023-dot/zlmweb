@@ -122,8 +122,26 @@ img{max-width:100%;display:block;}
 .hint{font-size:.85rem;color:var(--text-light);flex:1;text-align:center;}
 .hint.err{color:var(--risk);font-weight:600;}
 
-.scale-intro{background:var(--primary-soft);border:1px solid rgba(91,141,239,.18);border-radius:12px;padding:14px 18px;margin-bottom:20px;font-size:.9rem;color:var(--primary-dark);}
-.scale-intro b{font-weight:700;}
+/* 量表指导语：放在题目上方，字号与字重都加重，确保学生一眼看到 */
+.scale-intro{
+  background:var(--primary-soft);
+  border:1px solid rgba(91,141,239,.28);
+  border-left:4px solid var(--primary);
+  border-radius:12px;
+  padding:16px 20px;
+  margin-bottom:22px;
+  font-size:1.06rem;
+  font-weight:700;
+  line-height:1.75;
+  color:#3562A8;
+  letter-spacing:.2px;
+  box-shadow:0 2px 10px rgba(91,141,239,.10);
+}
+.scale-intro::before{content:'📋 ';}
+.scale-intro b{font-weight:800;}
+@media(max-width:560px){
+  .scale-intro{font-size:1rem;padding:14px 16px;margin-bottom:18px;}
+}
 .q-item{padding:18px 0;border-bottom:1px dashed var(--border);}
 .q-item:last-of-type{border-bottom:none;}
 .q-stem{font-size:.98rem;font-weight:600;margin-bottom:12px;display:flex;gap:9px;line-height:1.65;}
@@ -301,54 +319,63 @@ var OPT7 = [
   {t:'完全同意',     v:7}
 ];
 
-var SCALES = [
-  { key:'phq9', name:'抑郁', short:'PHQ-9', max:27, base:9,
-    guide:'在最近两周中，你有多少天出现过以下情况？请选出最符合你的选项。',
-    src:'病人健康问卷抑郁量表（PHQ-9, Spitzer 等 1999），标准 9 题，0–3 计分，总分 0–27。',
+/* 量表默认定义（服务端未返回时的兜底，含三套标准量表的指导语） */
+var DEFAULT_SCALES = [
+  { key:'phq9', name:'抑郁', short:'PHQ-9', max:27, base:9, opt:4, standard:true,
+    intro:'在最近两周中，你有多少天出现过以下情况？请根据你的实际情况，选出最符合你的选项。',
     opts:OPT4,
     items:['做事时提不起劲或没有兴趣。','感到心情低落、沮丧或绝望。','入睡困难、睡不安稳或睡眠过多。',
-      '感觉疲倦或没有活力。','食欲不振或吃太多。','觉得自己很糟糕或很失败，让自己或家人失望。',
-      '无法集中精力做功课、看书或看电视。','动作或语速慢到引起别人的注意，或正好相反。例如，比平常活动更多、坐立不安或停不下来。',
-      '有过用某种方式伤害自己的念头。'] },
-  { key:'gad7', name:'焦虑', short:'GAD-7', max:21, base:7,
-    guide:'在最近两周中，你有多少天出现过以下情况？请选出最符合你的选项。',
-    src:'广泛性焦虑量表（GAD-7, Spitzer 等 2006），标准 7 题，0–3 计分，总分 0–21。',
+      '感觉疲倦或没有活力。','食欲不振或吃太多。','觉得自己很糟，或觉得自己是失败者，或让自己或家人失望。',
+      '对事物专注有困难，例如阅读报纸或看电视时。','动作或说话速度缓慢到别人已经察觉？或正好相反——烦躁坐立不安、动来动去的情况更胜于平常。',
+      '有不如死掉或用某种方式伤害自己的念头。'] },
+  { key:'gad7', name:'焦虑', short:'GAD-7', max:21, base:7, opt:4, standard:true,
+    intro:'在最近两周中，你有多少天出现过以下情况？请你根据实际情况，选出最符合的选项。',
     opts:OPT4,
-    items:['感觉紧张、焦虑或不安。','无法停止或控制担忧。','对各种事情担心太多。','难以放松。',
-      '坐立不安，以至于很难安静地坐下来。','变得容易生气或急躁。','感觉害怕，好像有可怕的事情要发生一样。'] },
-  { key:'swls', name:'生活满意度', short:'SWLS', max:35, base:5,
-    guide:'仔细阅读下列描述，它们与你现在的实际情况符合程度如何？请选择相应的选项。',
-    src:'生活满意度量表（SWLS, Diener 等 1999），5 题，1–7 计分，总分 5–35。',
+    items:['感觉紧张、焦虑或急切。','不能停止或控制担忧。','对各种各样的事情担忧过多。','很难放松下来。',
+      '由于不安而无法静坐。','变得容易烦恼或急躁。','感到似乎将有可怕的事情发生而害怕。'] },
+  { key:'swls', name:'生活满意度', short:'SWLS', max:35, base:5, opt:7, standard:true,
+    intro:'仔细阅读下列描述，它们与你现在的实际情况符合程度如何？请选择相应的选项。',
     opts:OPT7,
     items:['在大多数情况下，我的生活接近我的理想状态。','我的生活条件很好。','我对我的生活感到满意。',
       '目前为止，我已经得到了生活中我想要的一些重要东西。','如果可以再活一次，我还愿意过现在这样的生活。'] }
 ];
+var SCALES = DEFAULT_SCALES.slice();
 
-/* PHQ-9 与 GAD-7 的评分窗口都是「最近两周」，渲染时自动在题干前加时间限定，
-   学生逐题作答时就不会凭印象乱答。SWLS 测整体生活满意度，不加时间限定。
-   ——前缀只在显示时附加，题库里存的是干净题干，教育局编辑时不会看到重复前缀。 */
+/* PHQ-9 与 GAD-7 的评分窗口是「最近两周」，题干渲染时自动加在前面 */
 var TIME_PREFIX = '最近两周，';
-function needsTimePrefix(key){ return key === 'phq9' || key === 'gad7'; }
 
-/* 题库由服务端下发（教育局可在后台增删），这里只留一份默认题面做兜底 */
-var QUESTION_CACHE = null;   // { phq9:[{id,title,flag}], gad7:[...], swls:[...] }
-function applyQuestions(q){
-  if(!q) return;
-  QUESTION_CACHE = q;
-  SCALES.forEach(function(sc){
-    var arr = q[sc.key];
-    if(Array.isArray(arr) && arr.length){
-      sc.items = arr.map(function(x){ return x.title; });
-      sc.qids  = arr.map(function(x){ return x.id; });
-      sc.flags = arr.map(function(x){ return x.flag || ''; });
-    }
+/* 量表整体由服务端下发（教育局可导入整套量表），本地只留兜底 */
+function optsOf(n){ return n === 7 ? OPT7 : OPT4; }
+function maxOf(sc){ return sc.opt === 7 ? sc.items.length * 7 : sc.items.length * 3; }
+function applyScales(list){
+  if(!Array.isArray(list) || !list.length) return;
+  SCALES = list.map(function(s){
+    return {
+      key: s.key,
+      name: s.name,
+      short: s.short,
+      base: s.base || (s.items ? s.items.length : 0),
+      opt: s.opt === 7 ? 7 : 4,
+      intro: s.intro || '',
+      standard: !!s.standard,
+      opts: optsOf(s.opt),
+      items: (s.items || []).map(function(x){ return x.title; }),
+      qids:  (s.items || []).map(function(x){ return x.id; }),
+      flags: (s.items || []).map(function(x){ return x.flag || ''; }),
+      max: 0
+    };
   });
+  SCALES.forEach(function(sc){ sc.max = maxOf(sc); });
 }
-/* 取某条答卷的题面：优先用它自带的题目快照（历史答卷不受后续增删影响） */
+/* 取某条答卷的题面：优先用它自带的题目快照（历史答卷不受后续导入影响） */
 function textsOf(r, key){
   if(r && r.qtext && Array.isArray(r.qtext[key]) && r.qtext[key].length) return r.qtext[key];
-  var sc = SCALES.filter(function(x){ return x.key === key; })[0];
+  var sc = scaleOf(key);
   return (sc && sc.items) || [];
+}
+function scaleOf(key){
+  var a = SCALES.filter(function(x){ return x.key === key; });
+  return a[0] || null;
 }
 
 function gradePHQ(s){
@@ -522,22 +549,16 @@ var Store = {
   remove: function(id){ return this._post('remove', { id:id }); },
   clear: function(){ return this._post('clear', {}); },
 
-  /* ---------- 题库与预警参数 ---------- */
-  /* 公开接口：一次性取回题库 + 当前预警参数，学生端和管理端共用 */
+  /* ---------- 量表与预警参数 ---------- */
+  /* 公开接口：一次性取回量表定义（含题目）+ 当前预警参数 */
   config: async function(){
     var res = await this._get('config');
     return res || {};
   },
-  questionsAdd: function(scaleKey, title){
-    return this._post('questions/add', { scaleKey:scaleKey, title:title });
-  },
-  questionsEdit: function(id, title){
-    return this._post('questions/edit', { id:id, title:title });
-  },
-  questionsDelete: function(id){ return this._post('questions/delete', { id:id }); },
-  questionsReset: function(scaleKey){
-    return this._post('questions/reset', { scaleKey:scaleKey });
-  },
+  /* 整表导入：key/name/short/intro/opt/items */
+  scaleImport: function(data){ return this._post('scales/import', data); },
+  scaleReset: function(key){ return this._post('scales/reset', { key:key }); },
+  scaleDelete: function(key){ return this._post('scales/delete', { key:key }); },
   alertGet: function(){ return this._post('alert/get', {}); },
   alertSave: function(cfg){ return this._post('alert/save', { config:cfg }); },
   alertReset: function(){ return this._post('alert/reset', {}); },
@@ -579,6 +600,13 @@ var state = {
   schoolOptions: []     // 学生端可选学校名单（由教育局开通）
 };
 SCALES.forEach(function(sc){ state.answers[sc.key] = new Array(sc.items.length).fill(null); });
+
+/* 按当前量表重建作答数组（量表数量或题数变化后调用） */
+function initAnswers(){
+  state.answers = {};
+  SCALES.forEach(function(sc){ state.answers[sc.key] = new Array(sc.items.length).fill(null); });
+  state.step = 0;
+}
 
 function esc(s){
   return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -671,8 +699,7 @@ function viewLogin(){
     if(!gv){ err.textContent = '请选择年级'; g.focus(); return; }
     if(!cv){ err.textContent = '请选择班级'; c.focus(); return; }
     state.user = { school: sv, name: nv, grade: gv, klass: cv };
-    state.step = 0;
-    SCALES.forEach(function(sc){ state.answers[sc.key] = new Array(sc.items.length).fill(null); });
+    initAnswers();
     viewQuiz();
   }
   document.getElementById('btnLogin').addEventListener('click', go);
@@ -709,10 +736,9 @@ function viewQuiz(){
     + '</div>';
 
   document.getElementById('qPrev').addEventListener('click', function(){
-    if(state.step > 0 && state.step < 3){ state.step--; renderQuiz(); }
+    if(state.step > 0){ state.step--; renderQuiz(); }
   });
   document.getElementById('qNext').addEventListener('click', function(){
-    if(state.step > 2) return;
     var arr = state.answers[SCALES[state.step].key];
     var undone = arr.filter(function(v){ return v === null; }).length;
     if(undone){
@@ -723,6 +749,8 @@ function viewQuiz(){
       if(first) first.scrollIntoView({ behavior:'smooth', block:'center' });
       return;
     }
+    /* 最后一组答完 → 直接提交（不再展示测评结果） */
+    if(state.step >= SCALES.length - 1){ submitQuiz(); return; }
     state.step++;
     renderQuiz();
   });
@@ -735,33 +763,37 @@ function renderQuiz(){
   var hintEl = document.getElementById('qhint');
   var prevBtn = document.getElementById('qPrev');
   var nextBtn = document.getElementById('qNext');
+  var total = SCALES.length;
 
-  bar.style.width = ((state.step + 1) / 4 * 100) + '%';
+  bar.style.width = ((state.step + 1) / total * 100) + '%';
+  renderScale(bodyEl, hintEl);
 
-  if(state.step < 3){ renderScale(bodyEl, hintEl); }
-  else { renderResult(bodyEl, hintEl); }
-
-  prevBtn.style.visibility = (state.step === 0 || state.step === 3) ? 'hidden' : 'visible';
-  nextBtn.style.display = (state.step === 3) ? 'none' : 'inline-block';
-  nextBtn.textContent = (state.step === 2) ? '提交问卷' : '下一步';
-  if(state.step < 3){
-    var undone = state.answers[SCALES[state.step].key].filter(function(v){ return v === null; }).length;
-    hintEl.className = 'hint';
-    hintEl.textContent = undone ? ('还有 ' + undone + ' 题未作答') : '本组已完成 ✓';
-  }
+  prevBtn.style.visibility = (state.step === 0) ? 'hidden' : 'visible';
+  nextBtn.textContent = (state.step === total - 1) ? '提交问卷 ✓' : '下一步';
+  var undone = state.answers[SCALES[state.step].key].filter(function(v){ return v === null; }).length;
+  hintEl.className = 'hint';
+  hintEl.textContent = undone ? ('还有 ' + undone + ' 题未作答') : '本组已完成 ✓';
   window.scrollTo({ top:0, behavior:'smooth' });
 }
 
 function renderScale(bodyEl, hintEl){
   var sc = SCALES[state.step];
   var arr = state.answers[sc.key];
-  var html = '';   /* 只呈现题目本身，不再显示量表名称、指导语与来源出处 */
+  var html = '';
 
-  var prefix = needsTimePrefix(sc.key) ? TIME_PREFIX : '';
+  /* 量表指导语：放在题目上方，说明作答的时间窗口与方式 */
+  if(sc.intro){
+    html += '<div class="scale-intro">' + esc(sc.intro) + '</div>';
+  }
+
+  /* PHQ-9 与 GAD-7 的评分窗口是「最近两周」，逐题题干前再强调一次，
+     学生逐题作答时不会凭印象乱答。SWLS 测整体生活满意度，不加时间限定。 */
+  var prefix = (sc.key === 'phq9' || sc.key === 'gad7') ? TIME_PREFIX : '';
   sc.items.forEach(function(text,i){
     var done = arr[i] !== null;
     html += '<div class="q-item' + (done?' answered':'') + '" data-i="' + i + '">'
-      + '<div class="q-stem"><span class="q-no">' + (i+1) + '</span><span>' + esc(prefix + text) + '</span></div>'
+      + '<div class="q-stem"><span class="q-no">' + (i+1) + '</span><span>'
+      + esc(prefix + text) + '</span></div>'
       + '<div class="q-opts c-' + sc.opts.length + '">';
     sc.opts.forEach(function(o){
       html += '<div class="q-opt' + (arr[i] === o.v ? ' sel':'') + '" data-v="' + o.v + '">'
@@ -794,122 +826,45 @@ function renderScale(bodyEl, hintEl){
 }
 
 /* ==========================================================
-   视图：结果 + 提交
+   提交（学生答完即提交，不再展示测评结果）
    ========================================================== */
-function renderResult(bodyEl, hintEl){
-  var phq  = state.answers.phq9.reduce(function(a,b){ return a + (b||0); }, 0);
-  var gad  = state.answers.gad7.reduce(function(a,b){ return a + (b||0); }, 0);
-  var swls = state.answers.swls.reduce(function(a,b){ return a + (b||0); }, 0);
-  var gp = gradePHQ(phq), gg = gradeGAD(gad), gs = gradeSWLS(swls);
-  var alert = judgeAlert(phq,gad,swls);
-  /* 自杀意念题按 flag 定位，题号因增删题目而变动也不会跟丢 */
-  var shIdx = (SCALES[0].flags || []).indexOf('selfharm');
-  var shv = shIdx >= 0 ? (state.answers.phq9[shIdx] || 0) : 0;
-  var selfHarm = shv > 0;
+async function submitQuiz(){
+  var bodyEl = document.getElementById('qbody');
+  if(!bodyEl) return;
+  var nextBtn = document.getElementById('qNext');
+  if(nextBtn){ nextBtn.disabled = true; nextBtn.textContent = '正在提交…'; }
 
-  var html = '';
-
-  if(selfHarm){
-    html += '<div class="crisis-box"><h4>🆘 请先看一下这里</h4>'
-      + '<p>你在最后一题提到<strong>有过伤害自己的念头</strong>。这句话很重要，也很勇敢——请不要一个人扛着。'
-      + '如果你现在正处在危险中，或觉得自己可能会伤害自己，请<strong>立刻</strong>联系身边的人，或拨打下面的热线。</p>'
-      + '<div class="hotline"><span>📞 全国希望24热线：400-161-9995</span>'
-      + '<span>📞 青少年服务台：12355</span>'
-      + '<span>📞 北京心理危机干预中心：010-82951332</span></div></div>';
-  }
-
-  html += '<div class="res-grid">'
-    + card('抑郁 PHQ-9', phq, 27, gp, '0–9 无 / 10–14 中度 / 15–27 重度')
-    + card('焦虑 GAD-7', gad, 21, gg, '0–4 无 / 5–9 轻度 / 10–14 中度 / 15–21 重度')
-    + card('生活满意度 SWLS', swls, 35, gs, '5–19 不满意 / 20 中性 / 21–35 满意')
-    + '</div>';
-
-  if(alert === 0){
-    html += '<div class="alert-box a-none">'
-      + '<h4><span class="ab-title">✅ 未列为预警对象</span><span class="ab-badge" style="color:#3FAE8F">常规关注</span></h4>'
-      + '<p>预警筛查要求<strong>同时满足两个条件</strong>：① 生活满意度 5–19 分；'
-      + '② 焦虑 10–21 分且抑郁 10–27 分。<br>'
-      + '你本次得分为：生活满意度 <b>' + swls + '</b> 分、焦虑 <b>' + gad + '</b> 分、抑郁 <b>' + phq + '</b> 分，'
-      + '未同时落入上述区间，因此<strong>当前未被列为预警对象</strong>。<br>'
-      + '这不代表必须永远"没问题"，只是说明此刻三项指标尚未同时到达预警区间。</p></div>';
-  }else{
-    var meta = ALERT_STD[alert];
-    html += '<div class="alert-box ' + meta.c + '">'
-      + '<h4><span class="ab-title">⚠️ ' + meta.t + '</span><span class="ab-badge">需关注</span></h4>'
-      + '<p>你本次得分为：生活满意度 <b>' + swls + '</b> 分（5–19）、焦虑 <b>' + gad + '</b> 分（10–21）、'
-      + '抑郁 <b>' + phq + '</b> 分（10–27），<strong>两个条件同时满足</strong>，被列为预警对象。<br>'
-      + '按焦虑与抑郁得分细分，属于<strong>' + meta.t + '</strong>：' + meta.cond + '。<br>' + meta.m + '</p></div>';
-  }
-
-  html += '<div class="advice"><h4>给你的几点小建议</h4><ul>'
-    + '<li><strong>抑郁（' + gp.label + '）：</strong>' + gp.advice + '</li>'
-    + '<li><strong>焦虑（' + gg.label + '）：</strong>' + gg.advice + '</li>'
-    + '<li><strong>生活满意度（' + gs.label + '）：</strong>' + gs.advice + '</li>'
-    + '<li><strong>通用：</strong>保持规律作息与每周 3 次以上中等强度运动；找一位愿意倾听的人定期聊聊；'
-    + '情绪低落时试试听一首慢歌或弹一段简单的和弦。</li></ul></div>';
-
-  html += '<div class="disclaim">'
-    + '📌 <b>关于这份结果：</b>PHQ-9、GAD-7 由辉瑞（Pfizer）授权免费使用，SWLS 由 Diener 等人编制、学术与科普场景广泛使用。'
-    + '预警分级采用调研报告正文标准。<br>'
-    + '⚠️ <b>重要：</b>本问卷是<strong>自评筛查工具</strong>，测的是"倾向"而非"疾病"，'
-    + '<b>不能替代临床诊断</b>。任何诊断都应由执业精神科医师或具备资质的心理咨询师作出，请不要据此给自己贴标签。</div>';
-
-  html += '<div style="text-align:center;margin-top:22px">'
-    + '<div id="submitTip" style="font-size:.86rem;color:var(--text-light);margin-bottom:12px">'
-    + '确认无误后点击下方按钮提交，结果将保存至后台</div>'
-    + '<button class="btn btn-primary" id="btnSubmit" style="max-width:300px">提交问卷 ✓</button> '
-    + '<button class="btn btn-ghost" id="btnBack" style="max-width:160px;margin-top:10px">返回修改</button>'
-    + '</div>';
-
-  bodyEl.innerHTML = html;
-  hintEl.textContent = '';
-
-  setTimeout(function(){
-    bodyEl.querySelectorAll('.rc-bar i').forEach(function(b){
-      b.style.width = b.getAttribute('data-w') + '%';
-    });
-  }, 60);
-
-  document.getElementById('btnBack').addEventListener('click', function(){
-    state.step = 0; renderQuiz();
+  /* 原始作答按量表收集，分数交给后端统一计算，前端不展示结果 */
+  var answers = {};
+  SCALES.forEach(function(sc){
+    answers[sc.key] = (state.answers[sc.key] || []).slice();
   });
-
-  document.getElementById('btnSubmit').addEventListener('click', async function(){
-    var btn = this, tip = document.getElementById('submitTip');
-    btn.disabled = true; btn.textContent = '正在提交…';
-    tip.textContent = '正在保存到后台…';
-
-    var rec = {
-      school: state.user.school,
-      name: state.user.name,
-      grade: state.user.grade,
-      klass: state.user.klass,
-      phq9: state.answers.phq9.slice(),
-      gad7: state.answers.gad7.slice(),
-      swls: state.answers.swls.slice(),
-      phq: phq, gad: gad, swlsScore: swls,
-      phqLevel: gp.label, gadLevel: gg.label, swlsLevel: gs.label,
-      alertLevel: alert,
-      selfHarm: selfHarm
-    };
-    try{
-      await Store.submit(rec);
-      state.view = 'done';
-      appEl.innerHTML = '<div class="login-box"><div class="card" style="text-align:center">'
-        + '<div style="font-size:3rem;margin-bottom:12px">🎉</div>'
-        + '<h1 style="font-size:1.4rem;margin-bottom:10px">提交成功</h1>'
-        + '<p style="color:var(--text-light);margin-bottom:24px">'
-        + '谢谢你，' + esc(state.user.name) + '。你的答卷已保存到后台。<br>'
-        + '记得照顾好自己，你比想象中更有力量 🌱</p>'
-        + '<button class="btn btn-primary" id="btnAgain" style="max-width:260px;margin:0 auto">再填一份</button>'
-        + '</div></div>';
-      document.getElementById('btnAgain').addEventListener('click', viewLogin);
-    }catch(e){
-      btn.disabled = false; btn.textContent = '重试提交 ✓';
-      tip.style.color = 'var(--risk)';
-      tip.textContent = '提交失败：' + esc(e.message);
-    }
-  });
+  var rec = {
+    school: state.user.school,
+    name: state.user.name,
+    grade: state.user.grade,
+    klass: state.user.klass,
+    answers: answers
+  };
+  try{
+    await Store.submit(rec);
+    state.view = 'done';
+    document.getElementById('btnHome').style.display = 'none';
+    appEl.innerHTML = '<div class="login-box"><div class="card" style="text-align:center">'
+      + '<div style="font-size:3rem;margin-bottom:12px">🎉</div>'
+      + '<h1 style="font-size:1.4rem;margin-bottom:10px">感谢你的填写</h1>'
+      + '<p style="color:var(--text-light);margin-bottom:24px">'
+      + '谢谢你，' + esc(state.user.name) + '。问卷已完成提交。<br>'
+      + '记得照顾好自己，你比想象中更有力量 🌱</p>'
+      + '<button class="btn btn-primary" id="btnAgain" style="max-width:260px;margin:0 auto">再填一份</button>'
+      + '</div></div>';
+    document.getElementById('btnAgain').addEventListener('click', viewLogin);
+  }catch(e){
+    if(nextBtn){ nextBtn.disabled = false; nextBtn.textContent = '重试提交 ✓'; }
+    var hintEl = document.getElementById('qhint');
+    if(hintEl){ hintEl.className = 'hint err'; hintEl.textContent = '提交失败：' + esc(e.message); }
+    else { alert('提交失败：' + (e.message || e)); }
+  }
 }
 
 function card(name, score, max, g, range){
@@ -1231,20 +1186,26 @@ function showDetail(r){
   html += resultExplain(r);
 
   SCALES.forEach(function(sc){
-    var arr = r[sc.key] || [];
-    /* 用答卷自带的题目快照：教育局后来增删题目，历史答卷仍按当时的题面显示 */
+    /* 作答优先取 answers（新结构），兼容旧记录的 phq9/gad7/swls 字段 */
+    var arr = (r.answers && r.answers[sc.key]) ? r.answers[sc.key] : (r[sc.key] || []);
+    /* 用答卷自带的题目快照：教育局后来导入量表，历史答卷仍按当时题面显示 */
     var texts = textsOf(r, sc.key);
     var n = Math.max(arr.length, texts.length);
-    var hasRaw = (typeof r[sc.key === 'phq9' ? 'phqRaw' : (sc.key === 'gad7' ? 'gadRaw' : 'swlsRaw')] === 'number');
+    var raw = (r.rawSum && typeof r.rawSum[sc.key] === 'number') ? r.rawSum[sc.key] : null;
+    var hasRaw = raw !== null;
     html += '<div class="detail-sec"><h5>' + esc(sc.short) + ' · ' + esc(sc.name)
       + '（' + n + ' 题'
-      + (n !== sc.base ? '，标准 ' + sc.base + ' 题，已按比例折算' : '')
+      + (!sc.standard && n !== sc.base ? '' : (n !== sc.base ? '，标准 ' + sc.base + ' 题，已按比例折算' : ''))
+      + (sc.standard ? '' : '　<span style="font-weight:400;color:var(--text-dim)">自定义量表</span>')
       + '）</h5>';
     if(hasRaw){
-      var raw = sc.key === 'phq9' ? r.phqRaw : (sc.key === 'gad7' ? r.gadRaw : r.swlsRaw);
       html += '<div style="font-size:.82rem;color:var(--text-light);margin-bottom:8px">'
-        + '原始合计 <b>' + raw + '</b> 分 → 折算后 <b>'
-        + (sc.key === 'phq9' ? r.phq : (sc.key === 'gad7' ? r.gad : r.swlsScore)) + '</b> 分（满分 ' + sc.max + '）</div>';
+        + '原始合计 <b>' + raw + '</b> 分'
+        + (sc.standard
+            ? ' → 折算后 <b>' + (sc.key === 'phq9' ? r.phq : (sc.key === 'gad7' ? r.gad : r.swlsScore))
+              + '</b> 分（满分 ' + sc.max + '）'
+            : '（满分 ' + sc.max + '）')
+        + '</div>';
     }
     for(var i = 0; i < n; i++){
       var v = arr[i];
@@ -1388,7 +1349,7 @@ async function loadBureau(){
     ]);
     state.records = rs[0];
     state.schools = rs[1];
-    if(rs[2] && rs[2].questions){ applyQuestions(rs[2].questions); }
+    if(rs[2] && rs[2].scales){ applyScales(rs[2].scales); }
     state.alertCfg = (rs[3] && rs[3].config) || null;
     state.alertMeta = { at:(rs[3] && rs[3].updatedAt) || 0, by:(rs[3] && rs[3].updatedBy) || '' };
     if(state.alertCfg) applyAlertConfig(state.alertCfg);
@@ -1457,57 +1418,106 @@ function drawCharts(){
 }
 
 /* ==========================================================
-   教育局端：题库管理面板（新增 / 编辑 / 删除 / 恢复默认）
+   教育局端：量表管理面板（整套导入 / 替换 / 删除）
    ========================================================== */
-function questionPanel(){
+function scalePanel(){
   var h = '<div class="card" style="margin-top:20px">'
-    + '<h3 style="font-size:1.05rem;font-weight:800;margin-bottom:6px">📝 测评题目管理</h3>'
+    + '<h3 style="font-size:1.05rem;font-weight:800;margin-bottom:6px">📦 量表管理</h3>'
     + '<div style="font-size:.84rem;color:var(--text-light);margin-bottom:16px">'
-    + '新增或删除题目后，学生端<b>立即生效</b>。题目数变化时，得分会按「当前题数 → 标准题数」'
-    + '折算回原量表分制，分级与预警阈值仍可正常使用。</div>';
+    + '以「整套量表」为单位管理：<b>一次性导入完整量表</b>（名称 + 指导语 + 全部题目），'
+    + '不支持单独增删某道题——整表替换才能保证量表内部一致、可复核。<br>'
+    + '三套标准量表可整体替换题目或恢复出厂；自定义量表可导入、替换、删除。</div>';
 
+  /* ---- 已有量表一览 ---- */
+  h += '<div class="table-box" style="margin-bottom:18px"><table><thead><tr>'
+    + '<th>量表</th><th style="width:70px">题数</th><th style="width:90px">计分</th>'
+    + '<th>指导语</th><th style="width:170px">操作</th>'
+    + '</tr></thead><tbody>';
   SCALES.forEach(function(sc){
-    var items = sc.items || [];
-    var qids  = sc.qids || [];
-    var flags = sc.flags || [];
-    h += '<details class="deploy" style="margin-top:0;margin-bottom:12px">'
-      + '<summary>' + esc(sc.short) + ' · ' + esc(sc.name) + '　（当前 ' + items.length
-      + ' 题 / 标准 ' + sc.base + ' 题）</summary>'
-      + '<div class="deploy-body">';
-
-    if(!items.length){
-      h += '<div class="empty">暂无题目</div>';
-    }else{
-      h += '<div class="table-box"><table><thead><tr>'
-        + '<th style="width:44px">题号</th><th>题目内容</th><th style="width:150px">操作</th>'
-        + '</tr></thead><tbody>';
-      items.forEach(function(t,i){
-        var isSh = flags[i] === 'selfharm';
-        h += '<tr>'
-          + '<td>' + (i+1) + '</td>'
-          + '<td>' + esc(t)
-          +   (isSh ? ' <span class="tag tag-1" style="font-size:.68rem">自杀意念题</span>' : '')
-          +   '<div style="margin-top:6px"><input class="input" style="font-size:.84rem;padding:7px 10px" '
-          +     'value="' + esc(t) + '" data-qedit="' + esc(qids[i] || '') + '"></div></td>'
-          + '<td style="white-space:nowrap">'
-          +   '<button class="link-btn" data-qsave="' + esc(qids[i] || '') + '">保存修改</button>'
-          +   '<button class="link-btn" data-qdel="' + esc(qids[i] || '') + '" style="color:var(--risk)">删除</button>'
-          + '</td></tr>';
-      });
-      h += '</tbody></table></div>';
-    }
-
-    h += '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:flex-start">'
-      +   '<input class="input" id="qNew_' + esc(sc.key) + '" placeholder="输入要新增的题目内容…" style="flex:1;min-width:220px">'
-      +   '<button class="btn btn-primary btn-sm" data-qadd="' + esc(sc.key) + '">➕ 新增题目</button>'
-      +   '<button class="btn btn-ghost btn-sm" data-qreset="' + esc(sc.key) + '" style="color:var(--text-light)">恢复默认题目</button>'
-      + '</div>'
-      + '<div class="err-tip" id="qErr_' + esc(sc.key) + '"></div>'
-      + '</div></details>';
+    h += '<tr>'
+      + '<td><b>' + esc(sc.short) + '</b> · ' + esc(sc.name)
+      +   (sc.standard ? ' <span class="tag tag-0" style="font-size:.68rem">标准</span>'
+                       : ' <span class="tag tag-2" style="font-size:.68rem">自定义</span>')
+      +   '<div class="sub-line">' + esc(sc.key) + '</div></td>'
+      + '<td>' + sc.items.length + ' 题</td>'
+      + '<td>' + (sc.opt === 7 ? '1–7 分' : '0–3 分') + '</td>'
+      + '<td style="font-size:.82rem;color:var(--text-light)">'
+      +   (sc.intro ? esc(sc.intro.length > 40 ? sc.intro.slice(0,40) + '…' : sc.intro) : '—')
+      + '</td>'
+      + '<td style="white-space:nowrap">'
+      +   '<button class="link-btn" data-sedit="' + esc(sc.key) + '">重新导入</button>'
+      +   (sc.standard
+            ? '<button class="link-btn" data-sreset="' + esc(sc.key) + '">恢复出厂</button>'
+            : '<button class="link-btn" data-scaledel="' + esc(sc.key) + '" style="color:var(--risk)">删除</button>')
+      + '</td></tr>';
   });
+  h += '</tbody></table></div>';
+
+  /* ---- 导入表单 ---- */
+  h += '<details class="deploy" style="margin-top:0" id="impBox" open><summary id="impSum">➕ 导入一整套量表</summary>'
+    + '<div class="deploy-body">'
+    +   '<input type="hidden" id="impKey" value="">'
+    +   '<div class="field-row">'
+    +     '<div class="field"><label>量表名称<span class="req">*</span></label>'
+    +       '<input class="input" id="impName" placeholder="如：学习压力量表"></div>'
+    +     '<div class="field"><label>英文简称</label>'
+    +       '<input class="input" id="impShort" placeholder="如：SAS"></div>'
+    +   '</div>'
+    +   '<div class="field"><label>计分方式</label>'
+    +     '<select class="input" id="impOpt">'
+    +       '<option value="4">0–3 分　（没有 / 一天或几天 / 七天以上 / 几乎每天）</option>'
+    +       '<option value="7">1–7 分　（完全不同意 … 完全同意）</option>'
+    +     '</select></div>'
+    +   '<div class="field"><label>指导语（显示在题目上方）</label>'
+    +     '<textarea class="input" id="impIntro" rows="2" placeholder="如：在最近两周中，你有多少天出现过以下情况？…"></textarea></div>'
+    +   '<div class="field"><label>题目内容<span class="req">*</span>　<span style="font-weight:400;color:var(--text-dim);font-size:.82rem">每行一题，可保留「1. 」这类编号</span></label>'
+    +     '<textarea class="input" id="impItems" rows="8" placeholder="做事时提不起劲或没有兴趣。&#10;感到心情低落、沮丧或绝望。&#10;入睡困难、睡不安稳或睡眠过多。"></textarea></div>'
+    +   '<div class="btn-row">'
+    +     '<button class="btn btn-primary btn-sm" id="impSave">导入量表</button>'
+    +     '<button class="btn btn-ghost btn-sm" id="impCancel" style="color:var(--text-light)">取消编辑</button>'
+    +     '<button class="btn btn-ghost btn-sm" id="impSample" style="color:var(--text-light)">填入示例</button>'
+    +   '</div>'
+    +   '<div class="err-tip" id="impErr"></div>'
+    + '</div></details>';
 
   h += '</div>';
   return h;
+}
+
+/* 把某套量表填进导入表单，便于在其基础上改 */
+function fillImport(key){
+  var sc = scaleOf(key);
+  if(!sc) return;
+  document.getElementById('impKey').value = key;
+  document.getElementById('impName').value = sc.name;
+  document.getElementById('impShort').value = sc.short;
+  document.getElementById('impOpt').value = String(sc.opt);
+  document.getElementById('impIntro').value = sc.intro || '';
+  document.getElementById('impItems').value = (sc.items || []).join('\n');
+  document.getElementById('impSum').textContent = '✏️ 正在编辑：' + sc.short + ' · ' + sc.name + '（导入后整体替换）';
+  document.getElementById('impBox').open = true;
+  /* 标准量表锁定名称与计分方式，只能换题目和指导语 */
+  var lock = !!sc.standard;
+  ['impName','impShort','impOpt'].forEach(function(id){
+    var el = document.getElementById(id);
+    if(el){ el.disabled = lock; el.style.opacity = lock ? '.55' : ''; }
+  });
+  document.getElementById('impSave').textContent = lock ? '替换题目' : '导入量表';
+  document.getElementById('impBox').scrollIntoView({ behavior:'smooth', block:'start' });
+}
+
+function clearImport(){
+  document.getElementById('impKey').value = '';
+  ['impName','impShort','impIntro','impItems'].forEach(function(id){
+    document.getElementById(id).value = '';
+  });
+  ['impName','impShort','impOpt'].forEach(function(id){
+    var el = document.getElementById(id);
+    el.disabled = false; el.style.opacity = '';
+  });
+  document.getElementById('impSum').textContent = '➕ 导入一整套量表';
+  document.getElementById('impSave').textContent = '导入量表';
+  document.getElementById('impErr').textContent = '';
 }
 
 /* ==========================================================
@@ -1665,8 +1675,8 @@ function renderBureau(){
     + '</div></details>'
     + '</div>';
 
-  /* ---- 题库管理：可增删测评题目 ---- */
-  html += questionPanel();
+  /* ---- 量表管理：整套导入 / 替换 / 删除 ---- */
+  html += scalePanel();
   /* ---- 预警指标设置：可调整判定算法 ---- */
   html += alertPanel()
     + stdPanel()
@@ -1749,54 +1759,76 @@ function renderBureau(){
   document.getElementById('btnLogout').addEventListener('click', doLogout);
   document.getElementById('btnPwd2').addEventListener('click', showPwdDialog);
 
-  /* ---------- 题库：新增 / 编辑 / 删除 / 恢复默认 ---------- */
-  appEl.querySelectorAll('[data-qadd]').forEach(function(b){
-    b.addEventListener('click', async function(){
-      var key = b.getAttribute('data-qadd');
-      var inp = document.getElementById('qNew_' + key);
-      var err = document.getElementById('qErr_' + key);
-      var v = inp.value.trim();
-      if(!v){ err.textContent = '请输入题目内容'; return; }
-      b.disabled = true;
-      try{
-        await Store.questionsAdd(key, v);
-        inp.value = '';
-        await loadBureau();
-      }catch(e){ err.textContent = esc(e.message); b.disabled = false; }
-    });
+  /* ---------- 量表：整套导入 / 替换 / 恢复出厂 / 删除 ---------- */
+  appEl.querySelectorAll('[data-sedit]').forEach(function(b){
+    b.addEventListener('click', function(){ fillImport(b.getAttribute('data-sedit')); });
   });
-  appEl.querySelectorAll('[data-qsave]').forEach(function(b){
-    b.addEventListener('click', async function(){
-      var id = b.getAttribute('data-qsave');
-      var inp = appEl.querySelector('[data-qedit="' + id + '"]');
-      var v = (inp && inp.value || '').trim();
-      if(!v){ alert('题目内容不能为空'); return; }
-      try{ await Store.questionsEdit(id, v); await loadBureau(); }
-      catch(e){ alert('保存失败：' + e.message); }
-    });
-  });
-  appEl.querySelectorAll('[data-qdel]').forEach(function(b){
+  appEl.querySelectorAll('[data-sreset]').forEach(function(b){
     b.addEventListener('click', function(){
-      var id = b.getAttribute('data-qdel');
-      var row = b.closest('tr');
-      var isSh = row && /自杀意念题/.test(row.textContent);
-      var tip = isSh
-        ? '这是「自杀意念题」（PHQ-9 第 9 题）。删除后，学生详情里的自杀意念维度与危机提示将不再显示。\n\n确定删除吗？'
-        : '确定删除这道题目吗？删除后，学生端题目数量会相应减少。';
-      if(!confirm(tip)) return;
-      Store.questionsDelete(id).then(loadBureau)
-        .catch(function(e){ alert('删除失败：' + e.message); });
-    });
-  });
-  appEl.querySelectorAll('[data-qreset]').forEach(function(b){
-    b.addEventListener('click', function(){
-      var key = b.getAttribute('data-qreset');
-      var sc = SCALES.filter(function(x){ return x.key === key; })[0];
-      if(!confirm('确定将「' + sc.name + '」恢复为默认的 ' + sc.base + ' 道标准题目吗？\n自定义题目会全部丢失。')) return;
-      Store.questionsReset(key).then(loadBureau)
+      var key = b.getAttribute('data-sreset');
+      var sc = scaleOf(key);
+      if(!confirm('确定将「' + (sc ? sc.short + ' · ' + sc.name : key) + '」恢复为出厂题目吗？\n当前导入的题目会全部丢失。')) return;
+      Store.scaleReset(key).then(loadBureau)
         .catch(function(e){ alert('操作失败：' + e.message); });
     });
   });
+  appEl.querySelectorAll('[data-scaledel]').forEach(function(b){
+    b.addEventListener('click', function(){
+      var key = b.getAttribute('data-scaledel');
+      var sc = scaleOf(key);
+      if(!confirm('确定删除自定义量表「' + (sc ? sc.short + ' · ' + sc.name : key) + '」吗？\n'
+        + '该量表的题目会一并移除，已提交答卷中的作答仍会保留在记录里。')) return;
+      Store.scaleDelete(key).then(loadBureau)
+        .catch(function(e){ alert('删除失败：' + e.message); });
+    });
+  });
+
+  var impSave = document.getElementById('impSave');
+  if(impSave){
+    impSave.addEventListener('click', async function(){
+      var err = document.getElementById('impErr');
+      err.textContent = '';
+      var name  = document.getElementById('impName').value.trim();
+      var short = document.getElementById('impShort').value.trim();
+      var intro = document.getElementById('impIntro').value.trim();
+      var opt   = document.getElementById('impOpt').value;
+      var raw   = document.getElementById('impItems').value;
+      var items = String(raw || '').split('\n').map(function(x){ return x.trim(); })
+                    .filter(function(x){ return x.length; });
+      var key   = document.getElementById('impKey').value.trim();
+
+      if(!name){ err.textContent = '请填写量表名称'; return; }
+      if(!items.length){ err.textContent = '请粘贴题目内容（每行一题）'; return; }
+      if(!key){
+        /* 新量表：用「英文简称/名称」生成一个稳定的 key */
+        var seed = (short || name).toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '');
+        key = 'c_' + (seed || 'scale') + '_' + Date.now().toString(36).slice(-5);
+      }
+      impSave.disabled = true; impSave.textContent = '导入中…';
+      try{
+        await Store.scaleImport({ key:key, name:name, short:short || name, intro:intro, opt:opt, items:items });
+        alert('导入成功，共 ' + items.length + ' 题。学生端下次打开即为新量表。');
+        await loadBureau();
+        clearImport();
+      }catch(e){
+        err.textContent = esc(e.message);
+        impSave.disabled = false; impSave.textContent = '导入量表';
+      }
+    });
+    document.getElementById('impCancel').addEventListener('click', clearImport);
+    document.getElementById('impSample').addEventListener('click', function(){
+      document.getElementById('impName').value = '学习压力量表';
+      document.getElementById('impShort').value = 'SAS';
+      document.getElementById('impOpt').value = '4';
+      document.getElementById('impIntro').value = '请根据你最近一个月的实际情况，选择最符合的选项。';
+      document.getElementById('impItems').value =
+        ['我觉得学习任务太重，压得我喘不过气。',
+         '我一想到考试就紧张不安。',
+         '我觉得自己的努力得不到应有的回报。',
+         '我担心成绩下滑会让家人失望。',
+         '我因为学习而睡不好觉。'].join('\n');
+    });
+  }
 
   /* ---------- 预警指标设置 ---------- */
   function collectCfg(){
@@ -1919,11 +1951,17 @@ function exportCSV(){
   if(!list.length){ alert('暂无数据可导出'); return; }
   var head = ['提交时间','学校','年级','班级','姓名','PHQ9总分','GAD7总分','SWLS总分',
     '抑郁等级','焦虑等级','满意度等级','自杀意念','预警级别','自伤念头'];
-  /* 题目数可能因教育局增删而与标准不同，列数取全部答卷里的最大值 */
-  var maxN = { phq9:0, gad7:0, swls:0 };
+  /* 自定义量表各自一列总分 */
+  SCALES.forEach(function(sc){ if(!sc.standard) head.push(sc.short + '总分'); });
+  /* 题目数可能因教育局导入量表而与标准不同，列数取全部答卷里的最大值 */
+  var maxN = {};
+  SCALES.forEach(function(sc){ maxN[sc.key] = 0; });
+  function ansOf(r, key){
+    return (r.answers && r.answers[key]) ? r.answers[key] : (r[key] || []);
+  }
   list.forEach(function(r){
     SCALES.forEach(function(sc){
-      var n = Math.max((r[sc.key] || []).length, textsOf(r, sc.key).length);
+      var n = Math.max(ansOf(r, sc.key).length, textsOf(r, sc.key).length);
       if(n > maxN[sc.key]) maxN[sc.key] = n;
     });
   });
@@ -1939,7 +1977,13 @@ function exportCSV(){
       r.alertLevel ? (r.alertLevel + '级') : '正常',
       r.selfHarm ? '是' : '否' ];
     SCALES.forEach(function(sc){
-      var arr = r[sc.key] || [];
+      if(!sc.standard){
+        var e = (r.extra && r.extra[sc.key]) ? r.extra[sc.key].raw : '';
+        row.push(e);
+      }
+    });
+    SCALES.forEach(function(sc){
+      var arr = ansOf(r, sc.key);
       for(var i = 0; i < maxN[sc.key]; i++){
         row.push(i < arr.length ? arr[i] : '');
       }
@@ -1967,14 +2011,15 @@ function exportCSV(){
 document.getElementById('btnAdmin').addEventListener('click', viewAdmin);
 document.getElementById('btnHome').addEventListener('click', viewLogin);
 
-/* 启动：先拉取服务端的题库与预警参数，再渲染，避免先显示旧题面再跳变 */
+/* 启动：先拉取服务端的量表定义与预警参数，再渲染，避免先显示旧题面再跳变 */
 function bootstrap(){
   Store.config().then(function(res){
     if(res && res.ok !== false){
-      applyQuestions(res.questions);
+      applyScales(res.scales);
       applyAlertConfig(res.alert);
     }
-  }).catch(function(){ /* 取不到就用内置默认题库与默认阈值 */ })
+    initAnswers();
+  }).catch(function(){ /* 取不到就用内置默认量表与默认阈值 */ initAnswers(); })
    .then(viewLogin);
 }
 bootstrap();
