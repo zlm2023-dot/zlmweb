@@ -646,9 +646,8 @@ function viewLogin(){
     +   '<div class="err-tip" id="loginErr"></div>'
     +   '<button class="btn btn-primary" id="btnLogin">进入问卷 →</button>'
     +   '<div class="notice">🔒 你的作答仅用于心理健康状况的统计分析，'
-    +     '结果由管理员统一查看。请放心按真实感受填写，<b>没有对错之分</b>。</div>'
+    +     '请放心按真实感受填写，<b>没有对错之分</b>。</div>'
     + '</div>'
-    + modeTip()
     + '</div>';
 
   var sel = document.getElementById('inpSchool');
@@ -658,8 +657,8 @@ function viewLogin(){
   var c   = document.getElementById('inpClass');
 
   /* 年级 / 班级做成下拉而不是填空，避免"初一/七年级/7年级"多种写法导致无法按班级统计 */
-  var GRADES = ['小学一年级','小学二年级','小学三年级','小学四年级','小学五年级','小学六年级',
-    '初一','初二','初三','高一','高二','高三','中职一年级','中职二年级','中职三年级','其他'];
+  var GRADES = ['小学四年级','小学五年级','小学六年级',
+    '初一','初二','初三','高一','高二','高三',];
   var CLASSES = [];
   for(var i = 1; i <= 30; i++) CLASSES.push(i + '班');
   CLASSES.push('其他');
