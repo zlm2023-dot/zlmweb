@@ -162,6 +162,41 @@ function normSchool(s) {
 }
 
 /* ==========================================================
+   身份证号处理：只存不可逆哈希，明文绝不落库
+   ------------------------------------------------------------
+   为什么要这样做：身份证号属于敏感个人信息，且涉及未成年人。
+   一旦数据库外泄，明文身份证号会造成实质伤害。这里用
+   「服务端盐 + PBKDF2」算出不可逆哈希，导入后立刻丢弃明文。
+   即使整库泄露，攻击者也拿不到任何人的身份证号，
+   但仍能完成「学生输入的号码是否与名单一致」的校验。
+   ========================================================== */
+function idSalt(env) {
+  return env.ID_SALT || 'psy-id-salt-2026';
+}
+async function hashId(raw, env) {
+  const s = String(raw || '').trim().toUpperCase().replace(/\s+/g, '');
+  return await hashPassword(s, idSalt(env));
+}
+/* 姓名归一化：去空格，用于与名单比对（中文姓名不区分大小写） */
+function normName(s) {
+  return String(s || '').trim().replace(/\s+/g, '');
+}
+/* 身份证号格式自检：18 位，最后一位可以是 X */
+function idLooksValid(s) {
+  return /^\d{17}[\dXx]$/.test(String(s || '').trim());
+}
+/* 身份证号 → 出生日期 → 年龄（用于提示，不落库） */
+function idBirthday(s) {
+  const v = String(s || '').trim();
+  if (!/^\d{17}[\dXx]$/.test(v)) return null;
+  const y = parseInt(v.slice(6, 10), 10);
+  const m = parseInt(v.slice(10, 12), 10);
+  const d = parseInt(v.slice(12, 14), 10);
+  if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+  return { y: y, m: m, d: d };
+}
+
+/* ==========================================================
    三、数据表（懒创建）
    ========================================================== */
 let schemaReady = null;
@@ -211,6 +246,21 @@ async function ensureSchema(db, adminPwd) {
         )`
       ).run();
       await db.prepare('CREATE INDEX IF NOT EXISTS idx_questions_scale ON questions(scale_key)').run();
+      /* 学生名单：学校端导入，用于身份核验与防重复提交
+         id_hash 为身份证号的不可逆哈希，明文不入库 */
+      await db.prepare(
+        `CREATE TABLE IF NOT EXISTS students (
+          id TEXT PRIMARY KEY,
+          school TEXT NOT NULL,
+          name TEXT NOT NULL,
+          id_hash TEXT NOT NULL,
+          used INTEGER NOT NULL DEFAULT 0,
+          used_at INTEGER,
+          created_at INTEGER NOT NULL
+        )`
+      ).run();
+      await db.prepare('CREATE INDEX IF NOT EXISTS idx_students_school ON students(school)').run();
+      await db.prepare('CREATE INDEX IF NOT EXISTS idx_students_hash ON students(id_hash)').run();
       /* 量表定义表：三套标准量表 + 教育局导入的自定义量表 */
       await db.prepare(
         `CREATE TABLE IF NOT EXISTS scales (
@@ -438,6 +488,33 @@ export default {
             typeof r.klass !== 'string' || !r.klass.trim()) {
           return json({ ok: false, msg: '请选择年级与班级' });
         }
+        /* ---------- 身份核验：必须在学校导入的学生名单内 ----------
+           注意：只有该校「已导入名单」时才强制要求身份证号。
+                 未导入名单的学校保持原有自由填写，不强加负担。 */
+        const idRaw = String(r.idnum || '').trim();
+        const schoolKey = normSchool(r.school);
+
+        /* 该校是否已导入名单 */
+        const cnt = await db.prepare('SELECT COUNT(*) AS c FROM students WHERE school = ?1')
+          .bind(schoolKey).first();
+        const hasRoster = !!(cnt && cnt.c > 0);
+
+        let studentRow = null;
+        if (hasRoster) {
+          if (!idRaw) return json({ ok: false, msg: '请填写身份证号' });
+          if (!idLooksValid(idRaw))
+            return json({ ok: false, msg: '身份证号格式不对，应为 18 位（最后一位可以是 X）' });
+          const idHash = await hashId(idRaw, env);
+          studentRow = await db.prepare(
+            'SELECT id, name, used FROM students WHERE school = ?1 AND id_hash = ?2'
+          ).bind(schoolKey, idHash).first();
+          if (!studentRow)
+            return json({ ok: false, msg: '该身份证号不在本校学生名单中，请核对后重试；若确属漏登，请联系本校老师添加' });
+          if (normName(studentRow.name) !== normName(r.name))
+            return json({ ok: false, msg: '身份证号与姓名不匹配，请核对你填写的姓名' });
+          if (studentRow.used)
+            return json({ ok: false, msg: '该学生已完成本次测评，不能重复提交。如属被他人冒名填写，请联系老师重置后再填' });
+        }
         /* 题目数量以当前题库为准（教育局导入量表后自动生效） */
         const S = await getScales(db);
         const Q = await getQuestions(db);
@@ -497,12 +574,50 @@ export default {
           selfHarmScore: shv,          /* 自杀意念维度：该题原始得分 0–3 */
           qcount,
           scaleNames: S.map(function (s) { return { key: s.key, name: s.name, short: s.short, standard: s.standard }; }),
-          qtext                        /* 题目快照：历史答卷按当时题面展示，不受后续导入影响 */
+          qtext,                       /* 题目快照：历史答卷按当时题面展示，不受后续导入影响 */
+          /* 身份核验结果：只记「是否通过核验」，不记身份证号本身 */
+          verified: hasRoster ? 1 : 0,
+          studentId: (studentRow && studentRow.id) || ''
         };
         await db.prepare('INSERT INTO records (id, created_at, school, data) VALUES (?1, ?2, ?3, ?4)')
           .bind(rec._id, rec.createdAt, normSchool(rec.school), JSON.stringify(rec))
           .run();
+        /* 标记该生已完成，堵住重复提交（学校端可重置） */
+        if (studentRow) {
+          await db.prepare('UPDATE students SET used = 1, used_at = ?1 WHERE id = ?2')
+            .bind(Date.now(), studentRow.id).run();
+        }
         return json({ ok: true, id: rec._id });
+      }
+
+      /* ==========================================================
+         学生端：用「姓名 + 身份证号」预校验是否在名单内
+         只返回「是/否」，不返回名单内容，避免被用来撞库
+         ========================================================== */
+      if (url.pathname === '/api/students/check') {
+        const school = String(body.school || '');
+        const name = normName(body.name || '');
+        const idRaw = String(body.idnum || '').trim();
+        if (!school.trim() || !name) return json({ ok: false, msg: '请填写学校与姓名' });
+        const schoolKey = normSchool(school);
+        const cnt = await db.prepare('SELECT COUNT(*) AS c FROM students WHERE school = ?1')
+          .bind(schoolKey).first();
+        /* 该校未导入名单 → 不校验，保持自由填写 */
+        if (!cnt || cnt.c === 0) return json({ ok: true, hasRoster: false });
+        if (!idRaw) return json({ ok: false, hasRoster: true, msg: '请填写身份证号' });
+        if (!idLooksValid(idRaw))
+          return json({ ok: false, hasRoster: true, msg: '身份证号格式不对，应为 18 位（最后一位可以是 X）' });
+        const idHash = await hashId(idRaw, env);
+        const row = await db.prepare(
+          'SELECT id, name, used FROM students WHERE school = ?1 AND id_hash = ?2'
+        ).bind(schoolKey, idHash).first();
+        if (!row)
+          return json({ ok: false, hasRoster: true, msg: '该身份证号不在本校学生名单中，请核对后重试' });
+        if (normName(row.name) !== name)
+          return json({ ok: false, hasRoster: true, msg: '身份证号与姓名不匹配，请核对你填写的姓名' });
+        if (row.used)
+          return json({ ok: false, hasRoster: true, msg: '该学生已完成本次测评，不能重复填写' });
+        return json({ ok: true, hasRoster: true });
       }
 
       /* ==========================================================
@@ -605,6 +720,130 @@ export default {
         } else {
           await db.prepare('DELETE FROM records').run();
         }
+        return json({ ok: true });
+      }
+
+      /* ==========================================================
+         学校端：学生名单导入（姓名 + 身份证号）
+         —— 身份证号只存不可逆哈希，明文不落库
+         ========================================================== */
+      if (url.pathname === '/api/students/list') {
+        if (!me || me.role !== 'school')
+          return json({ ok: false, msg: '仅学校端可查看本校学生名单' });
+        const schoolKey = normSchool(me.school);
+        const rows = await db.prepare(
+          'SELECT id,name,used,used_at,created_at FROM students WHERE school = ?1 ORDER BY created_at, name'
+        ).bind(schoolKey).all();
+        return json({ ok: true, school: me.school, data: rows.results || [] });
+      }
+
+      if (url.pathname === '/api/students/import') {
+        if (!me || me.role !== 'school')
+          return json({ ok: false, msg: '仅学校端可导入本校学生名单' });
+        const list = Array.isArray(body.list) ? body.list : [];
+        if (!list.length) return json({ ok: false, msg: '没有解析到任何学生数据' });
+        if (list.length > 5000) return json({ ok: false, msg: '一次最多导入 5000 人，请分批上传' });
+
+        const schoolKey = normSchool(me.school);
+        /* 收集合法行：先算哈希，明文用完即弃 */
+        const prepared = [];
+        const badRows = [];
+        for (let i = 0; i < list.length; i++) {
+          const it = list[i] || {};
+          const name = normName(it.name);
+          const idRaw = String(it.idnum == null ? '' : it.idnum).trim();
+          if (!name) { badRows.push({ row: i + 2, why: '姓名为空' }); continue; }
+          if (!idLooksValid(idRaw)) { badRows.push({ row: i + 2, why: '身份证号不是 18 位：' + (idRaw || '(空)') }); continue; }
+          prepared.push({ name: name, idRaw: idRaw });
+        }
+        if (!prepared.length)
+          return json({ ok: false, msg: '没有一行是合法的，请对照模板检查',
+            bad: badRows.slice(0, 20), badCount: badRows.length });
+
+        /* 逐条算哈希（异步，不能放在事务里） */
+        const rowsToInsert = [];
+        for (const p of prepared) {
+          rowsToInsert.push({ name: p.name, idHash: await hashId(p.idRaw, env) });
+        }
+
+        /* 同校去重：同一身份证号只保留一条 */
+        const seen = new Set();
+        const dedup = [];
+        let dupInFile = 0;
+        for (const r2 of rowsToInsert) {
+          if (seen.has(r2.idHash)) { dupInFile++; continue; }
+          seen.add(r2.idHash);
+          dedup.push(r2);
+        }
+
+        const mode = body.mode === 'append' ? 'append' : 'replace';
+        if (mode === 'replace') {
+          await db.prepare('DELETE FROM students WHERE school = ?1').bind(schoolKey).run();
+        } else {
+          /* 追加模式：跳过已存在的身份证号 */
+          const exist = await db.prepare('SELECT id_hash FROM students WHERE school = ?1').bind(schoolKey).all();
+          const has = new Set((exist.results || []).map(x => x.id_hash));
+          for (const r2 of dedup) if (has.has(r2.idHash)) r2.skip = true;
+        }
+
+        let added = 0, skipped = 0;
+        const now = Date.now();
+        for (const r2 of dedup) {
+          if (r2.skip) { skipped++; continue; }
+          /* 追加模式下也再查一次，防止同批次内冲突 */
+          if (mode === 'append') {
+            const dup = await db.prepare('SELECT id FROM students WHERE school = ?1 AND id_hash = ?2')
+              .bind(schoolKey, r2.idHash).first();
+            if (dup) { skipped++; continue; }
+          }
+          await db.prepare(
+            'INSERT INTO students (id,school,name,id_hash,used,created_at) VALUES (?1,?2,?3,?4,0,?5)'
+          ).bind(genId(), schoolKey, r2.name, r2.idHash, now).run();
+          added++;
+        }
+        const total = await db.prepare('SELECT COUNT(*) AS c FROM students WHERE school = ?1').bind(schoolKey).first();
+        return json({ ok: true, added: added, skipped: skipped,
+          dupInFile: dupInFile, bad: badRows.slice(0, 20), badCount: badRows.length,
+          total: (total && total.c) || 0 });
+      }
+
+      /* 重置某名学生的「已完成」状态，允许其重新填写 */
+      if (url.pathname === '/api/students/reset') {
+        if (!me || me.role !== 'school')
+          return json({ ok: false, msg: '仅学校端可操作本校名单' });
+        const row = await db.prepare('SELECT id,school FROM students WHERE id = ?1').bind(body.id).first();
+        if (!row) return json({ ok: false, msg: '学生不存在' });
+        if (normSchool(row.school) !== normSchool(me.school))
+          return json({ ok: false, msg: '只能操作本校学生' });
+        await db.prepare('UPDATE students SET used = 0, used_at = NULL WHERE id = ?1').bind(row.id).run();
+        return json({ ok: true });
+      }
+
+      /* 全部重置：让全校重新可填 */
+      if (url.pathname === '/api/students/resetAll') {
+        if (!me || me.role !== 'school')
+          return json({ ok: false, msg: '仅学校端可操作本校名单' });
+        await db.prepare('UPDATE students SET used = 0, used_at = NULL WHERE school = ?1')
+          .bind(normSchool(me.school)).run();
+        return json({ ok: true });
+      }
+
+      if (url.pathname === '/api/students/delete') {
+        if (!me || me.role !== 'school')
+          return json({ ok: false, msg: '仅学校端可操作本校名单' });
+        const row = await db.prepare('SELECT id,school FROM students WHERE id = ?1').bind(body.id).first();
+        if (!row) return json({ ok: false, msg: '学生不存在' });
+        if (normSchool(row.school) !== normSchool(me.school))
+          return json({ ok: false, msg: '只能操作本校学生' });
+        await db.prepare('DELETE FROM students WHERE id = ?1').bind(row.id).run();
+        return json({ ok: true });
+      }
+
+      /* 清空本校名单（不影响已提交的答卷） */
+      if (url.pathname === '/api/students/clear') {
+        if (!me || me.role !== 'school')
+          return json({ ok: false, msg: '仅学校端可操作本校名单' });
+        await db.prepare('DELETE FROM students WHERE school = ?1').bind(normSchool(me.school)).run();
         return json({ ok: true });
       }
 
