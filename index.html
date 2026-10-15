@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>心理健康问卷系统 · 邹林茂</title>
-<meta name="description" content="PHQ-9 / GAD-7 / SWLS 心理健康问卷填写与后台管理系统">
+<title>心理健康问卷系统</title>
+<meta name="description" content="心理健康问卷填写与后台管理系统">
 <!-- 图表库：教育局端画跨校对比图用。加载失败也不影响其余功能 -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
@@ -579,6 +579,10 @@ var Store = {
   studentsResetAll: function(){ return this._post('students/resetAll', {}); },
   studentDelete: function(id){ return this._post('students/delete', { id:id }); },
   studentsClear: function(){ return this._post('students/clear', {}); },
+  /* 学生档案：按姓名搜索，返回聚合后的档案 + 命中的完整答卷 */
+  studentsSearch: function(kw, school, grade, klass){
+    return this._post('students/search', { kw:kw, school:school || '', grade:grade || '', klass:klass || '' });
+  },
 
   /* ---------- 量表与预警参数 ---------- */
   /* 公开接口：一次性取回量表定义（含题目）+ 当前预警参数 */
@@ -627,6 +631,7 @@ var state = {
   auth: null,           // 登录身份 {role:'bureau'|'school', school, username}
   records: [],          // 当前可见的答卷
   roster: [],           // 学校端：本校学生名单（只含姓名与状态，不含身份证号）
+  archive: null,        // 学生档案搜索结果（null = 还没搜过）
   schools: [],          // 教育局端：学校账号列表
   filterSchool: '',     // 教育局端：按校名筛选
   schoolOptions: []     // 学生端可选学校名单（由教育局开通）
@@ -681,9 +686,8 @@ function viewLogin(){
     +   '<div class="err-tip" id="loginErr"></div>'
     +   '<button class="btn btn-primary" id="btnLogin">进入问卷 →</button>'
     +   '<div class="notice">🔒 你的作答仅用于心理健康状况的统计分析，'
-    +     '结果由管理员统一查看。请放心按真实感受填写，<b>没有对错之分</b>。</div>'
+    +     '请放心按真实感受填写，<b>没有对错之分</b>。</div>'
     + '</div>'
-    + modeTip()
     + '</div>';
 
   var sel = document.getElementById('inpSchool');
@@ -694,8 +698,8 @@ function viewLogin(){
   var c   = document.getElementById('inpClass');
 
   /* 年级 / 班级做成下拉而不是填空，避免"初一/七年级/7年级"多种写法导致无法按班级统计 */
-  var GRADES = ['小学一年级','小学二年级','小学三年级','小学四年级','小学五年级','小学六年级',
-    '初一','初二','初三','高一','高二','高三','中职一年级','中职二年级','中职三年级','其他'];
+  var GRADES = ['小学四年级','小学五年级','小学六年级',
+    '初一','初二','初三','高一','高二','高三'];
   var CLASSES = [];
   for(var i = 1; i <= 30; i++) CLASSES.push(i + '班');
   CLASSES.push('其他');
@@ -874,8 +878,6 @@ function renderScale(bodyEl, hintEl){
 
   if(state.step === 0){
     html += '<div class="disclaim" style="margin-top:18px">'
-      + '🔒 <b>隐私说明：</b>你的作答将与「学校 + 姓名」一起保存进后台，仅管理员可见，'
-      + '用于整体心理健康状况的统计与预警筛查，<b>不会对外公开</b>。</div>';
   }
   bodyEl.innerHTML = html;
 
@@ -1024,6 +1026,7 @@ async function doLogout(){
   await Store.logout();
   state.adminOk = false; state.auth = null; state.records = []; state.schools = [];
   state.filterSchool = '';
+  state.archive = null; state.roster = [];   // 切换账号时清空档案与名单，避免串号
   viewLogin();
 }
 
@@ -1078,6 +1081,197 @@ function stdPanel(){
    —— 导入「姓名 + 身份证号」，用于身份核验与防重复提交
    —— 身份证号在服务端转成不可逆哈希，明文不出后端、不回前端
    ========================================================== */
+/* ==========================================================
+   学生档案：按姓名搜索，把同一学生的历次测评聚成一份档案
+   —— 学校端只能查本校；教育局端可跨校
+   ========================================================== */
+function archivePanel(isBureau){
+  var h = '<div class="card" style="margin-top:20px">'
+    + '<h3 style="font-size:1.05rem;font-weight:800;margin-bottom:6px">📁 学生档案查询</h3>'
+    + '<div style="font-size:.84rem;color:var(--text-light);margin-bottom:14px">'
+    +   '输入学生姓名即可调出他<b>历次</b>的测评记录与变化趋势。'
+    +   (isBureau
+        ? '学校一栏留空表示在<b>全区</b>范围内查找。'
+        : '只能查询<b>本校</b>学生，看不到其他学校的数据。')
+    + '</div>'
+    + '<div class="toolbar">'
+    +   '<input class="input" id="archName" placeholder="学生姓名（必填，可只填姓或部分）" style="flex:2">'
+    +   (isBureau ? '<input class="input" id="archSchool" placeholder="学校（留空=全区）">' : '')
+    +   '<input class="input" id="archGrade" placeholder="年级（可选）" style="max-width:130px">'
+    +   '<input class="input" id="archClass" placeholder="班级（可选）" style="max-width:130px">'
+    +   '<button class="btn btn-primary btn-sm" id="archGo">🔍 查档案</button>'
+    +   '<button class="btn btn-ghost btn-sm" id="archClear">清空</button>'
+    + '</div>'
+    + '<div id="archResult"></div>'
+    + '</div>';
+  return h;
+}
+
+/* 档案搜索结果区（单独渲染，避免整页重刷时丢失已输入的条件） */
+function renderArchiveResult(){
+  var box = document.getElementById('archResult');
+  if(!box) return;
+  if(state.archive === null){
+    box.innerHTML = '<div class="table-box"><div class="empty">输入姓名后点「查档案」🔍<br>'
+      + '<span style="font-size:.82rem">例如输入「张」，可列出所有姓张的学生</span></div></div>';
+    return;
+  }
+  if(!state.archive.length){
+    box.innerHTML = '<div class="table-box"><div class="empty">没有找到匹配的学生 🗂️<br>'
+      + '<span style="font-size:.82rem">请确认姓名是否完整，或换个关键字试试</span></div></div>';
+    return;
+  }
+  box.innerHTML = state.archive.map(function(a){
+    return archiveCard(a, state.isBureauView);
+  }).join('');
+  bindArchiveCards();
+}
+
+/* 与上次相比的变化：抑郁 / 焦虑升高为变差（红），满意度升高为变好（绿） */
+function deltaText(d){
+  if(!d) return '<span style="color:var(--text-dim)">首次</span>';
+  var parts = [];
+  [['phq','抑郁'],['gad','焦虑'],['swls','满意']].forEach(function(p){
+    var k = p[0], v = d[k];
+    if(!v){ return; }
+    var worse = (k === 'swls') ? (v < 0) : (v > 0);
+    var color = worse ? 'var(--risk)' : 'var(--ok)';
+    parts.push('<span style="color:' + color + ';font-weight:700;white-space:nowrap">'
+      + p[1] + (v > 0 ? '↑' : '↓') + Math.abs(v) + '</span>');
+  });
+  return parts.length ? parts.join('　') : '<span style="color:var(--text-dim)">持平</span>';
+}
+
+function archiveCard(a, isBureau){
+  var harmN = a.records.filter(function(x){ return x.selfHarmScore > 0; }).length;
+  var h = '<div class="card" style="margin-bottom:16px;padding:22px;box-shadow:none">'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px">'
+    +   '<h4 style="font-size:1.05rem;font-weight:800">👤 ' + esc(a.name)
+    +     (isBureau ? '　<span style="font-weight:500;font-size:.86rem;color:var(--text-light)">' + esc(a.school) + '</span>' : '')
+    +   '</h4>'
+    +   '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    +     '<span class="tag tag-0">' + a.count + ' 次测评</span>'
+    +     (a.verified ? '<span class="tag tag-0">已核验身份</span>' : '')
+    +   '</div>'
+    + '</div>'
+    + '<div style="font-size:.84rem;color:var(--text-light);margin-bottom:14px">'
+    +   (a.grade || a.klass ? esc(a.grade) + esc(a.klass) + '　·　' : '')
+    +   '首次 ' + esc(fmtTime(a.firstAt)) + '　·　最近 ' + esc(fmtTime(a.lastAt))
+    + '</div>';
+
+  if(a.maybeSameName){
+    h += '<div class="alert-box a-3" style="margin-bottom:14px;padding:14px 16px">'
+      + '<h4 style="font-size:.95rem"><span class="ab-title">⚠️ 疑似同名</span></h4>'
+      + '<p style="font-size:.85rem">该校有多位同名学生，系统已按身份信息拆分成多份档案。'
+      + '请结合年级班级与测评时间人工核对，确认是否为同一人。</p></div>';
+  }
+  if(harmN){
+    h += '<div class="crisis-box" style="margin-bottom:14px;padding:14px 16px">'
+      + '<h4 style="font-size:.95rem">🆘 该生有 ' + harmN + ' 次测评涉及自伤念头</h4>'
+      + '<p style="font-size:.85rem">只要 PHQ-9 第 9 题大于 0，无论总分高低，都应立即安排一对一访谈。</p></div>';
+  }
+
+  h += '<div class="table-box"><table><thead><tr>'
+    + '<th>测评时间</th><th>年级班级</th><th>PHQ-9</th><th>GAD-7</th><th>SWLS</th>'
+    + '<th>自杀意念</th><th>预警</th><th>较上次</th>'
+    + '</tr></thead><tbody>'
+    + a.records.map(function(r){
+        var tag = r.alertLevel
+          ? '<span class="tag tag-' + r.alertLevel + '">' + r.alertLevel + '级</span>'
+          : '<span class="tag tag-0">正常</span>';
+        return '<tr data-aid="' + esc(r._id) + '" style="cursor:pointer">'
+          + '<td>' + esc(fmtTime(r.createdAt)) + '</td>'
+          + '<td>' + esc(r.grade || '') + esc(r.klass || '') + '</td>'
+          + '<td><b>' + r.phq + '</b> <span class="sub-line">' + esc(r.phqLevel) + '</span></td>'
+          + '<td><b>' + r.gad + '</b> <span class="sub-line">' + esc(r.gadLevel) + '</span></td>'
+          + '<td><b>' + r.swls + '</b> <span class="sub-line">' + esc(r.swlsLevel) + '</span></td>'
+          + '<td>' + (r.selfHarmScore > 0
+              ? '<span class="tag tag-' + (r.selfHarmScore >= 2 ? '1' : '2') + '">' + r.selfHarmScore + ' 分</span>'
+              : '<span class="tag tag-0">0</span>') + '</td>'
+          + '<td>' + tag + '</td>'
+          + '<td>' + deltaText(r.delta) + '</td>'
+          + '</tr>';
+      }).join('')
+    + '</tbody></table></div>'
+    + '<div class="foot-note">点击任意一行可查看该次测评的<b>结果说明</b>与逐题作答<br>'
+    + '「较上次」按抑郁、焦虑越低越好，生活满意度越高越好来着色：<span style="color:var(--ok)">绿色=好转</span>，<span style="color:var(--risk)">红色=加重</span></div>'
+    + '</div>';
+  return h;
+}
+
+/* 绑定档案卡：点行 → 打开该次测评的完整详情 */
+function bindArchiveCards(){
+  var box = document.getElementById('archResult');
+  if(!box) return;
+  box.querySelectorAll('tr[data-aid]').forEach(function(tr){
+    tr.addEventListener('click', function(){
+      var id = tr.getAttribute('data-aid');
+      var full = state.records.filter(function(x){ return String(x._id) === String(id); })[0];
+      if(!full){
+        alert('未能找到该次测评的完整数据，请点「查档案」重新搜索后再试。');
+        return;
+      }
+      showDetail(full);
+    });
+  });
+}
+
+/* 档案搜索：合并命中的完整答卷，保证点开就能看到逐题明细 */
+async function doArchiveSearch(){
+  var kwEl = document.getElementById('archName');
+  var resEl = document.getElementById('archResult');
+  if(!kwEl || !resEl) return;
+  var kw = kwEl.value.trim();
+  if(!kw){
+    resEl.innerHTML = '<div class="table-box"><div class="empty">请先输入学生姓名</div></div>';
+    kwEl.focus();
+    return;
+  }
+  var scEl = document.getElementById('archSchool');
+  var gEl = document.getElementById('archGrade');
+  var cEl = document.getElementById('archClass');
+  var btn = document.getElementById('archGo');
+  btn.disabled = true; btn.textContent = '查询中…';
+  resEl.innerHTML = '<div class="table-box"><div class="empty">正在查询…</div></div>';
+  try{
+    var res = await Store.studentsSearch(kw,
+      scEl ? scEl.value.trim() : '',
+      gEl ? gEl.value.trim() : '',
+      cEl ? cEl.value.trim() : '');
+    /* 命中的完整答卷合并进当前列表（按 _id 去重），这样点开就有逐题明细 */
+    var seen = {};
+    state.records.forEach(function(x){ seen[String(x._id)] = 1; });
+    (res.records || []).forEach(function(r){
+      if(!seen[String(r._id)]){ state.records.push(r); seen[String(r._id)] = 1; }
+    });
+    state.archive = res.data || [];
+    renderArchiveResult();
+  }catch(e){
+    resEl.innerHTML = '<div class="table-box"><div class="empty" style="color:var(--risk)">查询失败：'
+      + esc(e.message || e) + '</div></div>';
+  }
+  btn.disabled = false; btn.textContent = '🔍 查档案';
+}
+
+function bindArchive(){
+  if(!document.getElementById('archName')) return;   // 面板不存在时跳过
+  var btn = document.getElementById('archGo');
+  btn.addEventListener('click', doArchiveSearch);
+  ['archName','archSchool','archGrade','archClass'].forEach(function(id){
+    var el = document.getElementById(id);
+    if(el) el.addEventListener('keydown', function(e){ if(e.key === 'Enter') doArchiveSearch(); });
+  });
+  var cl = document.getElementById('archClear');
+  cl.addEventListener('click', function(){
+    ['archName','archSchool','archGrade','archClass'].forEach(function(id){
+      var el = document.getElementById(id); if(el) el.value = '';
+    });
+    state.archive = null;
+    renderArchiveResult();
+  });
+  renderArchiveResult();
+}
+
 function rosterPanel(records){
   var rs = state.roster || [];
   var doneN = rs.filter(function(x){ return x.used; }).length;
@@ -1207,6 +1401,9 @@ function renderAdmin(){
 
   /* ---- 学生名单管理（学校端）：导入后学生凭「姓名 + 身份证号」作答 ---- */
   html += rosterPanel(list);
+  /* ---- 学生档案查询（学校端：只能查本校） ---- */
+  state.isBureauView = false;
+  html += archivePanel(false);
 
   html += '<div class="toolbar">'
     + '<input class="input" id="inpSearch" placeholder="按姓名 / 年级 / 班级搜索…">'
@@ -1314,6 +1511,9 @@ function renderAdmin(){
 
   /* ---------- 学生名单：模板 / 解析 / 导入 / 重置 / 删除 ---------- */
   bindRoster();
+
+  /* ---------- 学生档案查询 ---------- */
+  bindArchive();
 
   document.getElementById('btnExport').addEventListener('click', exportCSV);
   document.getElementById('btnRefresh').addEventListener('click', loadRecords);
@@ -2072,6 +2272,10 @@ function renderBureau(){
     + stdPanel()
     + '</div>';
 
+  /* ---- 学生档案查询（跨校） ---- */
+  state.isBureauView = true;
+  html += archivePanel(true);
+
   /* ---- 全区答卷 ---- */
   html += '<div class="card" style="margin-top:20px">'
     + '<h3 style="font-size:1.05rem;font-weight:800;margin-bottom:14px">📋 全区答卷明细</h3>'
@@ -2088,6 +2292,9 @@ function renderBureau(){
     + '</div>';
 
   appEl.innerHTML = html;
+
+  /* ---------- 学生档案查询 ---------- */
+  bindArchive();
 
   function brows(rows){
     var s = '';

@@ -848,6 +848,127 @@ export default {
       }
 
       /* ==========================================================
+         学生档案：按姓名搜索，聚合同一学生的历次测评记录
+         —— 学校端只能查本校；教育局端可跨校（可限定学校）
+         —— 同一人靠 studentId（导入过名单时）精确归并；
+            未导入名单时按「学校 + 姓名」归并，若同名会拆开并提示
+         ========================================================== */
+      if (url.pathname === '/api/students/search') {
+        const kw = normName(body.kw || '').toLowerCase();
+        if (!kw) return json({ ok: false, msg: '请输入学生姓名' });
+
+        let rows;
+        if (me.role === 'school') {
+          /* 学校端强制锁定本校 */
+          rows = await db.prepare(
+            'SELECT data FROM records WHERE school = ?1 ORDER BY created_at DESC LIMIT 2000'
+          ).bind(me.school).all();
+        } else if (String(body.school || '').trim()) {
+          const sc = normSchool(body.school);
+          rows = await db.prepare(
+            'SELECT data FROM records WHERE school LIKE ?1 ORDER BY created_at DESC LIMIT 2000'
+          ).bind('%' + sc + '%').all();
+        } else {
+          rows = await db.prepare('SELECT data FROM records ORDER BY created_at DESC LIMIT 2000').all();
+        }
+
+        const all = (rows.results || []).map(x => {
+          try { return JSON.parse(x.data); } catch (e) { return null; }
+        }).filter(Boolean);
+
+        /* 姓名模糊匹配：输入「张」即可命中所有姓张的学生 */
+        const gk = normName(body.grade || '').toLowerCase();
+        const kk = normName(body.klass || '').toLowerCase();
+        const hit = all.filter(function (r) {
+          if (normName(r.name).toLowerCase().indexOf(kw) < 0) return false;
+          /* 年级 / 班级为可选二次筛选，留空不过滤 */
+          if (gk && normName(r.grade || '').toLowerCase().indexOf(gk) < 0) return false;
+          if (kk && normName(r.klass || '').toLowerCase().indexOf(kk) < 0) return false;
+          return true;
+        });
+        if (!hit.length) return json({ ok: true, data: [], records: [] });
+
+        /* 先按「学校 + 姓名」分组；组内若有 studentId 再细分，以区分同名不同人 */
+        const byName = {};
+        hit.forEach(function (r) {
+          const k = normSchool(r.school) + '|' + normName(r.name).toLowerCase();
+          const g = (byName[k] = byName[k] || { school: r.school, name: r.name, people: {} });
+          const pid = r.studentId ? ('sid:' + r.studentId) : 'noid';
+          (g.people[pid] = g.people[pid] || []).push(r);
+        });
+
+        const out = [];
+        Object.keys(byName).forEach(function (k) {
+          const g = byName[k];
+          const pids = Object.keys(g.people);
+          const sidPids = pids.filter(function (p) { return p !== 'noid'; });
+          /* 归并策略：
+             名单里该姓名只有一人时，把「未核验」的历史记录并入同一个人
+             —— 常见情形是先自由填写跑了一轮，后来才导入名单。
+             名单里该姓名有多人（真同名）时，未核验记录单独成组，提示人工核对。 */
+          let groups = [];
+          if (sidPids.length === 1 && g.people['noid']) {
+            groups.push({
+              pid: sidPids[0],
+              rs: g.people[sidPids[0]].concat(g.people['noid'])
+            });
+          } else {
+            pids.forEach(function (pid) { groups.push({ pid: pid, rs: g.people[pid] }); });
+          }
+          const multi = groups.length > 1;
+          groups.forEach(function (gp) {
+            const pid = gp.pid;
+            /* 组内按时间正序，便于算「与上次相比」的变化 */
+            const asc = gp.rs.slice().sort(function (a, b) { return a.createdAt - b.createdAt; });
+            const last = asc[asc.length - 1];
+            /* 展示用倒序：最近一次在最上面 */
+            const desc = asc.slice().reverse();
+            out.push({
+              key: k + '|' + pid,
+              name: g.name,
+              school: g.school,
+              studentId: pid === 'noid' ? '' : pid.slice(4),
+              verified: asc.some(function (r) { return r.verified; }),
+              /* 同一姓名下被拆成多个人 → 疑似同名，提醒人工核对 */
+              maybeSameName: multi,
+              count: asc.length,
+              firstAt: asc[0].createdAt,
+              lastAt: last.createdAt,
+              grade: last.grade || '',
+              klass: last.klass || '',
+              /* 历次记录：只带展示必需字段，答卷原文不在这里重复传 */
+              records: desc.map(function (r, i) {
+                const prev = desc[i + 1];   // 时间上更早的一次
+                return {
+                  _id: r._id,
+                  createdAt: r.createdAt,
+                  grade: r.grade || '',
+                  klass: r.klass || '',
+                  phq: r.phq, gad: r.gad, swls: r.swlsScore,
+                  phqLevel: r.phqLevel, gadLevel: r.gadLevel, swlsLevel: r.swlsLevel,
+                  alertLevel: r.alertLevel,
+                  selfHarmScore: typeof r.selfHarmScore === 'number' ? r.selfHarmScore : 0,
+                  selfHarm: !!r.selfHarm,
+                  verified: !!r.verified,
+                  /* 与上一次相比的升降：正数=上升，负数=下降；满意度越高越好，前端按语义着色 */
+                  delta: prev ? {
+                    phq: r.phq - prev.phq,
+                    gad: r.gad - prev.gad,
+                    swls: r.swlsScore - prev.swlsScore
+                  } : null
+                };
+              })
+            });
+          });
+        });
+        out.sort(function (a, b) { return b.lastAt - a.lastAt; });
+
+        /* 一并返回命中的完整答卷，前端合并进列表后即可直接点开看逐题明细 */
+        const cap = hit.slice(0, 300);
+        return json({ ok: true, data: out.slice(0, 200), records: cap });
+      }
+
+      /* ==========================================================
          教育局端：学校账号管理
          ========================================================== */
       if (url.pathname === '/api/schools/list') {
